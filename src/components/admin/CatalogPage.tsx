@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Grid3X3,
@@ -46,6 +46,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { toast } from 'sonner'
 
 interface CategoryItem {
   id: string
@@ -128,31 +129,36 @@ export function CatalogPage() {
   const [formIcon, setFormIcon] = useState('flame')
   const [formOrder, setFormOrder] = useState('1')
 
-  // ─── Fetch categories from API ──────────────────────────────────────────────
-  useEffect(() => {
-    async function loadCategories() {
-      try {
-        const res = await fetch('/api/categories')
-        if (res.ok) {
-          const data = await res.json()
-          setCategories((data.categories || []).map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            slug: c.slug,
-            icon: c.icon || 'film',
-            order: c.order,
-            videoCount: 0,
-            viewCount: 0,
-          })))
-        }
-      } catch (err) {
-        console.error('Error loading categories:', err)
-      } finally {
-        setLoading(false)
+  // ── Fetch categories from API ──────────────────────────────────────────────
+  const fetchCategories = useCallback(async () => {
+    try {
+      const res = await fetch('/api/categories')
+      if (res.ok) {
+        const data = await res.json()
+        setCategories((data.categories || []).map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          slug: c.slug,
+          icon: c.icon || 'film',
+          order: c.order,
+          videoCount: 0,
+          viewCount: 0,
+        })))
+      } else {
+        const errorData = await res.json().catch(() => ({}))
+        toast.error(errorData.error || 'Failed to load categories')
       }
+    } catch (err) {
+      console.error('Error loading categories:', err)
+      toast.error('Failed to load categories')
+    } finally {
+      setLoading(false)
     }
-    loadCategories()
   }, [])
+
+  useEffect(() => {
+    fetchCategories()
+  }, [fetchCategories])
 
   const resetForm = () => {
     setFormName('')
@@ -178,7 +184,10 @@ export function CatalogPage() {
   }
 
   const handleSave = async () => {
-    if (!formName.trim() || !formSlug.trim()) return
+    if (!formName.trim() || !formSlug.trim()) {
+      toast.error('Name and slug are required')
+      return
+    }
 
     try {
       if (editingCategory) {
@@ -195,13 +204,11 @@ export function CatalogPage() {
           }),
         })
         if (res.ok) {
-          setCategories((prev) =>
-            prev.map((c) =>
-              c.id === editingCategory.id
-                ? { ...c, name: formName, slug: formSlug, icon: formIcon, order: parseInt(formOrder) }
-                : c
-            )
-          )
+          toast.success('Category updated successfully')
+          await fetchCategories()
+        } else {
+          const errorData = await res.json().catch(() => ({}))
+          toast.error(errorData.error || 'Failed to update category')
         }
       } else {
         // Create new category via API
@@ -216,21 +223,16 @@ export function CatalogPage() {
           }),
         })
         if (res.ok) {
-          const data = await res.json()
-          const newCategory: CategoryItem = {
-            id: data.category?.id || Date.now().toString(),
-            name: formName,
-            slug: formSlug,
-            icon: formIcon,
-            order: parseInt(formOrder),
-            videoCount: 0,
-            viewCount: 0,
-          }
-          setCategories((prev) => [...prev, newCategory])
+          toast.success('Category created successfully')
+          await fetchCategories()
+        } else {
+          const errorData = await res.json().catch(() => ({}))
+          toast.error(errorData.error || 'Failed to create category')
         }
       }
     } catch (err) {
       console.error('Error saving category:', err)
+      toast.error('Failed to save category')
     }
 
     setDialogOpen(false)
@@ -240,10 +242,17 @@ export function CatalogPage() {
   const handleDelete = async () => {
     if (!deletingCategory) return
     try {
-      await fetch(`/api/categories?id=${deletingCategory.id}`, { method: 'DELETE' })
-      setCategories((prev) => prev.filter((c) => c.id !== deletingCategory.id))
+      const res = await fetch(`/api/categories?id=${deletingCategory.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        toast.success('Category deleted successfully')
+        await fetchCategories()
+      } else {
+        const errorData = await res.json().catch(() => ({}))
+        toast.error(errorData.error || 'Failed to delete category')
+      }
     } catch (err) {
       console.error('Error deleting category:', err)
+      toast.error('Failed to delete category')
     }
     setDeleteDialogOpen(false)
     setDeletingCategory(null)
