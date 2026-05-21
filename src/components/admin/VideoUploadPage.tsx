@@ -53,10 +53,12 @@ const thumbnailGradients = [
 ]
 
 const qualityOptions = [
-  { value: 'auto', label: 'Auto', desc: 'Recommended' },
-  { value: '1080p', label: '1080p', desc: '' },
-  { value: '2k', label: '2K', desc: '' },
-  { value: '4k', label: '4K', desc: '' },
+  { value: '360p', label: '360p', desc: '' },
+  { value: '480p', label: '480p', desc: '' },
+  { value: '720p', label: '720p', desc: 'HD' },
+  { value: '1080p', label: '1080p', desc: 'FHD' },
+  { value: '2k', label: '2K', desc: 'QHD' },
+  { value: '4k', label: '4K', desc: 'UHD' },
 ]
 
 const categoryOptions = [
@@ -98,7 +100,7 @@ export function VideoUploadPage() {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('')
-  const [quality, setQuality] = useState('1080p')
+  const [quality, setQuality] = useState('720p')
   const [duration, setDuration] = useState('')
   const [isFeatured, setIsFeatured] = useState(false)
   const [isTrending, setIsTrending] = useState(false)
@@ -206,7 +208,7 @@ export function VideoUploadPage() {
 
   const handleResetUpload = useCallback(() => {
     setUploadStage('idle'); setUploadProgress(0); setFileInfo(null); setTitle('')
-    setDescription(''); setCategory(''); setQuality('1080p'); setDuration('')
+    setDescription(''); setCategory('');     setQuality('720p'); setDuration('')
     setIsFeatured(false); setIsTrending(false); setIsLive(false); setSelectedThumbnail(0)
     setVideoFile(null); setVideoUrl(''); setThumbnailUrl(''); setLocalThumbnailUrl('')
     setThumbnailBlob(null); setPreviewVideoUrl(''); setLocalThumbnailUrls([]); setCurrentTime(0); setVideoDuration(0)
@@ -216,7 +218,7 @@ export function VideoUploadPage() {
   }, [])
 
   const handleClearForm = useCallback(() => {
-    setTitle(''); setDescription(''); setCategory(''); setQuality('1080p')
+    setTitle(''); setDescription(''); setCategory('');     setQuality('720p')
     setDuration(''); setIsFeatured(false); setIsTrending(false); setIsLive(false)
   }, [])
 

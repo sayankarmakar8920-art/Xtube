@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { generateStorageKey, getProvider, isR2Configured } from '@/lib/storage/r2-client'
-import { mkdirSync, writeFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 
-const PUBLIC_DIR = join(process.cwd(), 'public')
+const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID
+const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID
+const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'xtube-media'
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || ''
+
+const s3Client = R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
+  ? new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: R2_ACCESS_KEY_ID,
+        secretAccessKey: R2_SECRET_ACCESS_KEY,
+      },
+    })
+  : null
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,38 +28,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
 
-    const key = generateStorageKey(file.name, category as any)
     const buffer = Buffer.from(await file.arrayBuffer())
+    const timestamp = Date.now()
+    const randomId = Math.random().toString(36).substring(2, 10)
+    const ext = file.name.split('.').pop() || 'bin'
+    const key = `${category}/${new Date().getFullYear()}/${String(new Date().getMonth() + 1).padStart(2, '0')}/${randomId}-${timestamp}.${ext}`
 
-    if (isR2Configured()) {
+    if (s3Client) {
       // Upload to R2
-      const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID
-      const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID
-      const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY
-      const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || 'xtube-media'
-      const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || ''
-
-      const R2_BASE_URL = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
-      const host = `${R2_BUCKET_NAME}.${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
-
-      // Simple PUT to R2
-      const url = `${R2_BASE_URL}/${R2_BUCKET_NAME}/${key}`
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: buffer,
-      })
-
-      if (!res.ok) {
-        throw new Error(`R2 upload failed: ${res.status}`)
-      }
+      await s3Client.send(new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: key,
+        Body: buffer,
+        ContentType: file.type || 'application/octet-stream',
+      }))
 
       const publicUrl = R2_PUBLIC_URL ? `${R2_PUBLIC_URL}/${key}` : key
       return NextResponse.json({ key, url: publicUrl, provider: 'r2', size: buffer.length })
     } else {
       // Local fallback
+      const { mkdirSync, writeFileSync, existsSync } = await import('fs')
+      const { join } = await import('path')
+      const PUBLIC_DIR = join(process.cwd(), 'public')
       const fullPath = join(PUBLIC_DIR, key)
       const dir = join(PUBLIC_DIR, key.split('/').slice(0, -1).join('/'))
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true })

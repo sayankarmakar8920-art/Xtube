@@ -148,8 +148,8 @@ export default function XtubeHome() {
   const [apiLoaded, setApiLoaded] = useState(false)
 
   // ─── Supabase Realtime Subscriptions (supplements API data with live updates) ──
-  const { data: realtimeVideos } = useRealtimeSubscription<VideoData>('Video', { filter: 'isPublished=eq.true', initialData: apiVideos })
-  const { data: realtimeCategories } = useRealtimeSubscription<CategoryData>('Category', { initialData: apiCategories })
+  const { data: realtimeVideos, isLoading: videosLoading } = useRealtimeSubscription<VideoData>('Video', { filter: 'isPublished=eq.true', initialData: apiVideos })
+  const { data: realtimeCategories, isLoading: catsLoading } = useRealtimeSubscription<CategoryData>('Category', { initialData: apiCategories })
   const { data: realtimeFooterAds } = useRealtimeSubscription<FooterAdData>('FooterAd', { filter: 'isActive=eq.true', initialData: apiFooterAds })
   const { data: realtimeHeroAds } = useRealtimeSubscription<HeroAdData>('HeroAd', { filter: 'isActive=eq.true', initialData: apiHeroAds })
   const { data: realtimeAds } = useRealtimeSubscription<AdData>('Ad', { filter: 'isActive=eq.true', initialData: apiAds })
@@ -221,6 +221,7 @@ export default function XtubeHome() {
     return () => clearTimeout(t)
   }, [])
   const loading = skeletonTimeout && !videos.length && !categories.length && !apiLoaded
+  const realtimeLoading = videosLoading || catsLoading
 
   // Seed only runs once EVER per browser (persisted via localStorage)
   const seedRan = useRef(false)
