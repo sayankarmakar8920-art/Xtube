@@ -9,12 +9,8 @@ export interface UploadResult {
   size: number
 }
 
-const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB chunks
+const CHUNK_SIZE = 5 * 1024 * 1024
 
-/**
- * Uploads a file (File or Blob) using a multipart chunked upload flow.
- * Works seamlessly with both Cloudflare R2 and Local Fallback storage.
- */
 export async function uploadFile(
   file: File | Blob,
   category: FileCategory,
@@ -24,142 +20,131 @@ export async function uploadFile(
   const fileSize = file.size
   const mimeType = file.type || 'application/octet-stream'
 
-  // 1. Initialize the multipart upload
-  const initRes = await fetch('/api/r2?action=init-upload', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fileName,
-      fileSize,
-      mimeType,
-      category,
-    }),
-  })
+  try {
+    // 1. Initialize multipart upload
+    const initRes = await fetch('/api/r2?action=init-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName, fileSize, mimeType, category }),
+    })
 
-  if (!initRes.ok) {
-    throw new Error(`Failed to initialize upload: ${await initRes.text()}`)
-  }
+    if (!initRes.ok) {
+      const errText = await initRes.text()
+      throw new Error(`Init failed (${initRes.status}): ${errText}`)
+    }
 
-  const { uploadId, key, parts, provider } = await initRes.json() as {
-    uploadId: string
-    key: string
-    parts: Array<{ partNumber: number; uploadUrl: string }>
-    provider: 'r2' | 'local'
-  }
+    const { uploadId, key, parts, provider } = await initRes.json()
 
-  const completedParts: Array<{ partNumber: number; etag: string }> = []
-  let uploadedBytes = 0
-  const startTime = Date.now()
+    const completedParts: Array<{ partNumber: number; etag: string }> = []
+    let uploadedBytes = 0
+    const startTime = Date.now()
 
-  // 2. Upload each chunk sequentially
-  for (const part of parts) {
-    const start = (part.partNumber - 1) * CHUNK_SIZE
-    const end = Math.min(fileSize, start + CHUNK_SIZE)
-    const chunk = file.slice(start, end)
-    const chunkLength = end - start
+    // 2. Upload each chunk
+    for (const part of parts) {
+      const start = (part.partNumber - 1) * CHUNK_SIZE
+      const end = Math.min(fileSize, start + CHUNK_SIZE)
+      const chunk = file.slice(start, end)
+      const chunkLength = end - start
 
-    let attempts = 0
-    const maxAttempts = 3
-    let uploadedPartSuccessful = false
-    let etag = ''
+      let attempts = 0
+      const maxAttempts = 3
+      let etag = ''
 
-    while (attempts < maxAttempts && !uploadedPartSuccessful) {
-      try {
+      while (attempts < maxAttempts) {
         attempts++
-        // Prepare fetch options. We PUT the raw binary data.
-        const headers: Record<string, string> = {
-          'Content-Length': chunkLength.toString(),
-        }
-
-        // If local mode, we upload to our own API and might want content type,
-        // but raw binary is accepted by request.arrayBuffer() directly.
-        if (provider === 'local') {
-          headers['Content-Type'] = 'application/octet-stream'
-        }
-
-        const res = await fetch(part.uploadUrl, {
-          method: 'PUT',
-          headers,
-          body: chunk,
-        })
-
-        if (!res.ok) {
-          throw new Error(`Part upload HTTP error ${res.status}: ${await res.text()}`)
-        }
-
-        // Extract ETag:
-        // - Directly from header if present (standard for R2/S3)
-        // - From JSON body if our API returns it (local fallback)
-        let matchedEtag = res.headers.get('ETag')
-        if (!matchedEtag) {
-          try {
-            const body = await res.json()
-            matchedEtag = body.etag
-          } catch {
-            // Not a JSON response
+        try {
+          const headers: Record<string, string> = {}
+          if (provider === 'local') {
+            headers['Content-Type'] = 'application/octet-stream'
           }
-        }
 
-        if (!matchedEtag) {
-          throw new Error('ETag header / body property missing from response')
-        }
+          const res = await fetch(part.uploadUrl, {
+            method: 'PUT',
+            headers,
+            body: chunk,
+          })
 
-        // Clean up quotes around ETag if any
-        etag = matchedEtag.replace(/^"|"$/g, '')
-        uploadedPartSuccessful = true
-      } catch (err) {
-        console.warn(`Chunk ${part.partNumber} upload attempt ${attempts} failed:`, err)
-        if (attempts >= maxAttempts) {
-          throw new Error(`Failed to upload chunk ${part.partNumber} after ${maxAttempts} attempts: ${String(err)}`)
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+          }
+
+          let matchedEtag = res.headers.get('ETag')
+          if (!matchedEtag) {
+            try {
+              const body = await res.json()
+              matchedEtag = body.etag
+            } catch { /* not JSON */ }
+          }
+
+          if (!matchedEtag) throw new Error('No ETag in response')
+
+          etag = matchedEtag.replace(/^"|"$/g, '')
+          break
+        } catch (err) {
+          console.warn(`Chunk ${part.partNumber} attempt ${attempts} failed:`, err)
+          if (attempts >= maxAttempts) throw err
+          await new Promise(r => setTimeout(r, 1000))
         }
-        // Wait 1s before retrying
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+
+      completedParts.push({ partNumber: part.partNumber, etag })
+      uploadedBytes += chunkLength
+
+      const elapsed = (Date.now() - startTime) / 1000
+      const speed = elapsed > 0 ? uploadedBytes / elapsed : 0
+      const speedStr = (speed / (1024 * 1024)).toFixed(1) + ' MB/s'
+      const remainingBytes = fileSize - uploadedBytes
+      const remainingSec = speed > 0 ? remainingBytes / speed : 0
+      const remainingStr = remainingSec > 60
+        ? `${Math.ceil(remainingSec / 60)} mins left`
+        : `${Math.ceil(remainingSec)} secs left`
+
+      if (onProgress) {
+        onProgress((uploadedBytes / fileSize) * 100, speedStr, remainingStr)
       }
     }
 
-    completedParts.push({ partNumber: part.partNumber, etag })
-    uploadedBytes += chunkLength
+    // 3. Complete upload
+    const completeRes = await fetch('/api/r2?action=complete-upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploadId, key, parts: completedParts }),
+    })
 
-    // Calculate metrics to report progress
-    const elapsedSeconds = (Date.now() - startTime) / 1000
-    const speedBytesPerSec = elapsedSeconds > 0 ? uploadedBytes / elapsedSeconds : 0
-    const speedMBps = (speedBytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s'
-
-    const remainingBytes = fileSize - uploadedBytes
-    const remainingSeconds = speedBytesPerSec > 0 ? remainingBytes / speedBytesPerSec : 0
-    let remainingStr = ''
-    if (remainingSeconds > 60) {
-      remainingStr = `${Math.ceil(remainingSeconds / 60)} mins left`
-    } else {
-      remainingStr = `${Math.ceil(remainingSeconds)} secs left`
+    if (!completeRes.ok) {
+      throw new Error(`Complete failed: ${await completeRes.text()}`)
     }
 
-    if (onProgress) {
-      const progressPercent = (uploadedBytes / fileSize) * 100
-      onProgress(progressPercent, speedMBps, remainingStr)
-    }
+    const result = await completeRes.json()
+    return { key: result.key, url: result.url, provider: result.provider, size: result.size }
+  } catch (err) {
+    console.error('Multipart upload failed, trying direct upload:', err)
+
+    // Fallback: direct upload via FormData
+    return directUpload(file, category, fileName, onProgress)
   }
+}
 
-  // 3. Complete the multipart upload
-  const completeRes = await fetch('/api/r2?action=complete-upload', {
+async function directUpload(
+  file: File | Blob,
+  category: FileCategory,
+  fileName: string,
+  onProgress?: (progress: number) => void
+): Promise<UploadResult> {
+  const formData = new FormData()
+  formData.append('file', file, fileName)
+  formData.append('category', category)
+
+  const res = await fetch('/api/upload', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      uploadId,
-      key,
-      parts: completedParts,
-    }),
+    body: formData,
   })
 
-  if (!completeRes.ok) {
-    throw new Error(`Failed to complete upload: ${await completeRes.text()}`)
+  if (!res.ok) {
+    throw new Error(`Direct upload failed: ${await res.text()}`)
   }
 
-  const result = await completeRes.json()
-  return {
-    key: result.key,
-    url: result.url,
-    provider: result.provider,
-    size: result.size,
-  }
+  const result = await res.json()
+  if (onProgress) onProgress(100)
+  return { key: result.key, url: result.url, provider: result.provider || 'local', size: file.size }
 }

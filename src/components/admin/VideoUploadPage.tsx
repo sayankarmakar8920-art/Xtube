@@ -127,6 +127,7 @@ export function VideoUploadPage() {
     setUploadProgress(0)
     setUploadedSize('0 MB')
     setUploadSpeed('0 MB/s')
+    setUploadRemaining('')
 
     const nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name
     setTitle(nameWithoutExt)
@@ -164,8 +165,8 @@ export function VideoUploadPage() {
 
       const uploadRes = await uploadFile(file, 'video', file.name, (progress, speed, remaining) => {
         setUploadProgress(progress)
-        setUploadSpeed(speed)
-        setUploadRemaining(remaining)
+        setUploadSpeed(speed || '0 MB/s')
+        setUploadRemaining(remaining || '')
         const uploadedMB = (progress / 100) * file.size / (1024 * 1024)
         setUploadedSize(uploadedMB >= 1024 ? `${(uploadedMB / 1024).toFixed(2)} GB` : `${uploadedMB.toFixed(1)} MB`)
       })
@@ -176,15 +177,18 @@ export function VideoUploadPage() {
         try {
           const thumbRes = await uploadFile(meta.thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
           setThumbnailUrl(thumbRes.url)
-        } catch {}
+        } catch (thumbErr) {
+          console.warn('Thumbnail upload failed, using auto-generated:', thumbErr)
+        }
       }
 
       setUploadStage('success')
       toast.success('Video uploaded successfully!')
     } catch (err) {
+      console.error('Upload failed:', err)
       setUploadStage('idle')
       setFileInfo(null)
-      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
     }
   }, [])
 
