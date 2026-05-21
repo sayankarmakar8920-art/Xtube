@@ -110,7 +110,7 @@ export function VideoUploadPage() {
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [thumbnailUrl, setThumbnailUrl] = useState('')
-  const [localThumbnailUrl, setLocalThumbnailUrl] = useState('')
+  const [localThumbnailUrls, setLocalThumbnailUrls] = useState<string[]>([])
   const [thumbnailBlob, setThumbnailBlob] = useState<Blob | File | null>(null)
   const [previewVideoUrl, setPreviewVideoUrl] = useState('')
   const [isPublishing, setIsPublishing] = useState(false)
@@ -159,7 +159,8 @@ export function VideoUploadPage() {
       })
 
       setThumbnailBlob(meta.thumbnailBlob)
-      setLocalThumbnailUrl(URL.createObjectURL(meta.thumbnailBlob))
+      const urls = meta.thumbnails.map(t => URL.createObjectURL(t))
+      setLocalThumbnailUrls(urls)
       setPreviewVideoUrl(URL.createObjectURL(file))
       setUploadStage('uploading')
 
@@ -208,7 +209,7 @@ export function VideoUploadPage() {
     setDescription(''); setCategory(''); setQuality('1080p'); setDuration('')
     setIsFeatured(false); setIsTrending(false); setIsLive(false); setSelectedThumbnail(0)
     setVideoFile(null); setVideoUrl(''); setThumbnailUrl(''); setLocalThumbnailUrl('')
-    setThumbnailBlob(null); setPreviewVideoUrl(''); setCurrentTime(0); setVideoDuration(0)
+    setThumbnailBlob(null); setPreviewVideoUrl(''); setLocalThumbnailUrls([]); setCurrentTime(0); setVideoDuration(0)
     setIsPlaying(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (thumbnailInputRef.current) thumbnailInputRef.current.value = ''
@@ -221,8 +222,10 @@ export function VideoUploadPage() {
 
   const handleManualThumbnailSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.length) {
-      setThumbnailBlob(e.target.files[0])
-      setLocalThumbnailUrl(URL.createObjectURL(e.target.files[0]))
+      const file = e.target.files[0]
+      setThumbnailBlob(file)
+      const url = URL.createObjectURL(file)
+      setLocalThumbnailUrls([url])
       setSelectedThumbnail(0)
     }
   }, [])
@@ -328,8 +331,8 @@ export function VideoUploadPage() {
                   <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="overflow-hidden rounded-xl border border-white/5 bg-[#111]">
                     <div className="flex items-center gap-3 p-3">
                       <div className="relative h-14 w-24 flex-shrink-0 overflow-hidden rounded-lg bg-xtube-card">
-                        {localThumbnailUrl ? (
-                          <img src={localThumbnailUrl} alt="" className="h-full w-full object-cover" />
+                        {localThumbnailUrls.length > 0 ? (
+                          <img src={localThumbnailUrls[0]} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <div className="flex h-full items-center justify-center"><Film className="h-5 w-5 text-white/25" /></div>
                         )}
@@ -427,20 +430,16 @@ export function VideoUploadPage() {
                 {uploadStage === 'success' && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <div className="mb-2 flex items-center justify-between">
-                      <span className="text-sm font-medium text-white/70">Thumbnail</span>
+                      <span className="text-sm font-medium text-white/70">Thumbnails (10 auto-generated)</span>
                       <button onClick={() => thumbnailInputRef.current?.click()} className="text-xs text-xtube-red hover:text-xtube-red-hover">Upload Manually</button>
                       <input ref={thumbnailInputRef} type="file" accept="image/*" className="hidden" onChange={handleManualThumbnailSelect} />
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      {thumbnailGradients.map((g, i) => (
+                    <div className="grid grid-cols-5 gap-2">
+                      {localThumbnailUrls.map((url, i) => (
                         <button key={i} onClick={() => setSelectedThumbnail(i)}
-                          className={`relative aspect-video overflow-hidden rounded-lg border-2 ${selectedThumbnail === i ? 'border-xtube-red' : 'border-transparent hover:border-white/20'}`}
+                          className={`relative aspect-video overflow-hidden rounded-lg border-2 transition-all ${selectedThumbnail === i ? 'border-xtube-red shadow-[0_0_10px_rgba(229,9,20,0.3)]' : 'border-transparent hover:border-white/20'}`}
                         >
-                          {i === 0 && localThumbnailUrl ? (
-                            <img src={localThumbnailUrl} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <div className={`absolute inset-0 bg-gradient-to-br ${g}`} />
-                          )}
+                          <img src={url} alt={`Frame ${i + 1}`} className="h-full w-full object-cover" />
                           {selectedThumbnail === i && (
                             <div className="absolute inset-0 flex items-center justify-center bg-xtube-red/20">
                               <CheckCircle2 className="h-5 w-5 text-xtube-red" />
@@ -451,7 +450,7 @@ export function VideoUploadPage() {
                     </div>
                     <div className="mt-2 flex items-start gap-1.5">
                       <AlertCircle className="mt-0.5 h-3 w-3 text-white/25" />
-                      <p className="text-[11px] text-white/30">Thumbnail auto-generated after upload</p>
+                      <p className="text-[11px] text-white/30">10 frames auto-generated from video. Select preferred thumbnail.</p>
                     </div>
                   </motion.div>
                 )}
