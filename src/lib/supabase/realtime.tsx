@@ -121,15 +121,21 @@ export function useRealtimeSubscription<T extends Record<string, unknown> = Reco
   useEffect(() => {
     if (!client) return // Supabase not configured, skip realtime
     let channel: RealtimeChannel | null = null
+    let mounted = true
 
     const subscribe = () => {
       const channelName = `rt:${table}:${filter ?? 'all'}`
+      
+      // Remove any existing channel with the same name first
+      client.removeChannel(client.channel(channelName))
+      
       channel = client
         .channel(channelName)
         .on<T>(
           'postgres_changes',
           { event: '*', schema, table, filter },
           (payload: RealtimePostgresChangesPayload<T>) => {
+            if (!mounted) return
             setData((prev) => {
               const next = [...prev]
               if (payload.eventType === 'INSERT') {
@@ -158,8 +164,11 @@ export function useRealtimeSubscription<T extends Record<string, unknown> = Reco
           }
         )
         .subscribe((status) => {
+          if (!mounted) return
           if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
             setError('Realtime connection lost')
+          } else if (status === 'SUBSCRIBED') {
+            setError(null)
           }
         })
     }
@@ -167,7 +176,10 @@ export function useRealtimeSubscription<T extends Record<string, unknown> = Reco
     subscribe()
 
     return () => {
-      if (channel && client) client.removeChannel(channel)
+      mounted = false
+      if (channel && client) {
+        client.removeChannel(channel)
+      }
       if (rafRef.current) {
         clearTimeout(rafRef.current)
         rafRef.current = null
@@ -197,12 +209,14 @@ export function useRealtimePresence(channelName: string): UsePresenceResult {
 
   useEffect(() => {
     if (!client) return // Supabase not configured, skip presence
+    let mounted = true
     const channel = client.channel(channelName, {
       config: { presence: { key: '' } },
     })
 
     channel
       .on('presence', { event: 'sync' }, () => {
+        if (!mounted) return
         const state = channel.presenceState<PresenceState>() as unknown as PresenceState
         setOnlineUsers(Object.keys(state).length)
       })
@@ -211,6 +225,7 @@ export function useRealtimePresence(channelName: string): UsePresenceResult {
     channelRef.current = channel
 
     return () => {
+      mounted = false
       client.removeChannel(channel)
       channelRef.current = null
     }

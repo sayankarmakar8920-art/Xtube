@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Grid3X3,
@@ -129,7 +129,7 @@ export function CatalogPage() {
   const [formOrder, setFormOrder] = useState('1')
 
   // ─── Fetch categories from API ──────────────────────────────────────────────
-  useState(() => {
+  useEffect(() => {
     async function loadCategories() {
       try {
         const res = await fetch('/api/categories')
@@ -152,7 +152,7 @@ export function CatalogPage() {
       }
     }
     loadCategories()
-  })
+  }, [])
 
   const resetForm = () => {
     setFormName('')
@@ -368,7 +368,37 @@ export function CatalogPage() {
         </Dialog>
       </motion.div>
 
+      {/* Loading State */}
+      {loading && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-32 animate-pulse rounded-xl bg-white/5" />
+          ))}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && sortedCategories.length === 0 && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex min-h-[40vh] flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-white/10"
+        >
+          <Grid3X3 className="h-12 w-12 text-white/20" />
+          <p className="text-lg font-medium text-white/40">No categories yet</p>
+          <p className="text-sm text-white/30">Add your first category to organize content</p>
+          <Button
+            onClick={openCreateDialog}
+            className="bg-xtube-red hover:bg-xtube-red-hover text-white mt-2"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Category
+          </Button>
+        </motion.div>
+      )}
+
       {/* Category Grid */}
+      {!loading && sortedCategories.length > 0 && (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         <AnimatePresence>
           {sortedCategories.map((category, idx) => {
@@ -448,6 +478,7 @@ export function CatalogPage() {
           })}
         </AnimatePresence>
       </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
