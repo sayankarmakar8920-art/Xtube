@@ -17,8 +17,6 @@ import {
   RealtimePostgresChangesPayload,
 } from '@supabase/supabase-js'
 
-// ── Client singleton (browser only) ──────────────────────────────
-
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
@@ -40,8 +38,6 @@ function getBrowserClient(): SupabaseClient | null {
   return globalForSupabase.realtimeClient
 }
 
-// ── Context ──────────────────────────────────────────────────────
-
 const RealtimeContext = createContext<SupabaseClient | null>(null)
 
 function useSupabase(): SupabaseClient | null {
@@ -49,21 +45,15 @@ function useSupabase(): SupabaseClient | null {
   return ctx
 }
 
-// ── Provider ─────────────────────────────────────────────────────
-
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const client = useMemo(() => getBrowserClient(), [])
-  // If Supabase is not configured, render children without provider (no realtime)
   if (!client) return <>{children}</>
   return <RealtimeContext.Provider value={client}>{children}</RealtimeContext.Provider>
 }
 
-// ── Types ────────────────────────────────────────────────────────
-
 interface RealtimeOptions<T = any> {
   filter?: string
   schema?: string
-  /** Polling interval (ms) when realtime fails. Default: 5000 */
   pollInterval?: number
   initialData?: T[]
 }
@@ -74,8 +64,6 @@ interface UseRealtimeResult<T> {
   error: string | null
 }
 
-// ── useRealtimeSubscription ──────────────────────────────────────
-
 export function useRealtimeSubscription<T extends Record<string, unknown> = Record<string, unknown>>(
   table: string,
   options: RealtimeOptions<T> = {}
@@ -84,113 +72,83 @@ export function useRealtimeSubscription<T extends Record<string, unknown> = Reco
   const client = useSupabase()
 
   const [data, setData] = useState<T[]>(initialData || [])
-  const [isLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(!initialData?.length)
   const [error, setError] = useState<string | null>(null)
+  const channelRef = useRef<RealtimeChannel | null>(null)
 
-  // Keep state in sync when initialData changes (e.g. after API load completes)
   useEffect(() => {
     if (initialData) {
       setData(initialData)
+      setIsLoading(false)
     }
   }, [initialData])
 
-  // Throttle state updates to max once per 200ms
-  const lastEmit = useRef(0)
-  const pendingRef = useRef<T[]>([])
-  const rafRef = useRef<number | null>(null)
-
-  const throttledSet = useCallback((next: T[]) => {
-    const now = Date.now()
-    if (now - lastEmit.current >= 200) {
-      lastEmit.current = now
-      setData(next)
-    } else {
-      pendingRef.current = next
-      if (!rafRef.current) {
-        const delay = 200 - (now - lastEmit.current)
-        setTimeout(() => {
-          lastEmit.current = Date.now()
-          setData(pendingRef.current)
-          rafRef.current = null
-        }, delay)
-      }
-    }
-  }, [])
-
-  // Realtime subscription only — data loading is handled by consuming hooks via API routes
   useEffect(() => {
-    if (!client) return // Supabase not configured, skip realtime
-    let channel: RealtimeChannel | null = null
-    let mounted = true
-
-    const subscribe = () => {
-      const channelName = `rt:${table}:${filter ?? 'all'}`
-      
-      // Remove any existing channel with the same name first
-      client.removeChannel(client.channel(channelName))
-      
-      channel = client
-        .channel(channelName)
-        .on<T>(
-          'postgres_changes',
-          { event: '*', schema, table, filter },
-          (payload: RealtimePostgresChangesPayload<T>) => {
-            if (!mounted) return
-            setData((prev) => {
-              const next = [...prev]
-              if (payload.eventType === 'INSERT') {
-                const exists = next.some((r) => (r as Record<string, unknown>).id === (payload.new as Record<string, unknown>).id)
-                if (!exists) {
-                  next.unshift(payload.new) // Put newest first
-                }
-              } else if (payload.eventType === 'UPDATE') {
-                const oldId = (payload.old as Record<string, unknown>)?.id || (payload.new as Record<string, unknown>)?.id
-                const idx = next.findIndex((r) => (r as Record<string, unknown>).id === oldId)
-                if (idx !== -1) {
-                  next[idx] = payload.new
-                } else {
-                  next.unshift(payload.new)
-                }
-              } else if (payload.eventType === 'DELETE') {
-                const oldId = (payload.old as Record<string, unknown>)?.id
-                if (oldId) {
-                  const delIdx = next.findIndex((r) => (r as Record<string, unknown>).id === oldId)
-                  if (delIdx !== -1) next.splice(delIdx, 1)
-                }
-              }
-              throttledSet(next)
-              return next
-            })
-          }
-        )
-        .subscribe((status) => {
-          if (!mounted) return
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            setError('Realtime connection lost')
-          } else if (status === 'SUBSCRIBED') {
-            setError(null)
-          }
-        })
+    if (!client) {
+      setIsLoading(false)
+      return
     }
 
-    subscribe()
+    let mounted = true
+    const channelName = `rt:${table}:${filter ?? 'all'}`
+
+    const channel = client
+      .channel(channelName)
+      .on<T>(
+        'postgres_changes',
+        { event: '*', schema, table, filter },
+        (payload: RealtimePostgresChangesPayload<T>) => {
+          if (!mounted) return
+
+          setData((prev) => {
+            const existing = [...prev]
+            if (payload.eventType === 'INSERT') {
+              const newId = (payload.new as Record<string, unknown>)?.id
+              if (newId && !existing.some((r) => (r as Record<string, unknown>).id === newId)) {
+                existing.unshift(payload.new)
+              }
+            } else if (payload.eventType === 'UPDATE') {
+              const newId = (payload.new as Record<string, unknown>)?.id
+              const idx = newId ? existing.findIndex((r) => (r as Record<string, unknown>).id === newId) : -1
+              if (idx !== -1) {
+                existing[idx] = payload.new
+              } else {
+                existing.unshift(payload.new)
+              }
+            } else if (payload.eventType === 'DELETE') {
+              const oldId = (payload.old as Record<string, unknown>)?.id
+              if (oldId) {
+                const delIdx = existing.findIndex((r) => (r as Record<string, unknown>).id === oldId)
+                if (delIdx !== -1) existing.splice(delIdx, 1)
+              }
+            }
+            return existing
+          })
+        }
+      )
+      .subscribe((status) => {
+        if (!mounted) return
+        if (status === 'SUBSCRIBED') {
+          setIsLoading(false)
+          setError(null)
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setError('Realtime connection lost')
+        }
+      })
+
+    channelRef.current = channel
 
     return () => {
       mounted = false
-      if (channel && client) {
-        client.removeChannel(channel)
-      }
-      if (rafRef.current) {
-        clearTimeout(rafRef.current)
-        rafRef.current = null
+      if (channelRef.current) {
+        client.removeChannel(channelRef.current)
+        channelRef.current = null
       }
     }
-  }, [table, filter, schema, client, throttledSet])
+  }, [table, filter, schema, client])
 
   return { data, isLoading, error }
 }
-
-// ── useRealtimePresence ──────────────────────────────────────────
 
 interface PresenceState {
   [key: string]: { user_id?: string; name?: string; online_at: string }[]
@@ -208,7 +166,7 @@ export function useRealtimePresence(channelName: string): UsePresenceResult {
   const channelRef = useRef<RealtimeChannel | null>(null)
 
   useEffect(() => {
-    if (!client) return // Supabase not configured, skip presence
+    if (!client) return
     let mounted = true
     const channel = client.channel(channelName, {
       config: { presence: { key: '' } },

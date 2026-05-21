@@ -167,14 +167,23 @@ export default function XtubeHome() {
           fetch('/api/ads'),
         ])
         if (cancelled) return
+
         if (videosRes.ok) {
           const data = await videosRes.json()
-          setApiVideos(data.videos || [])
+          const vids = data.videos || []
+          setApiVideos(vids)
+          console.log(`[Page] Loaded ${vids.length} videos from API`)
+        } else {
+          console.warn('[Page] Failed to fetch videos:', videosRes.status)
         }
+
         if (categoriesRes.ok) {
           const data = await categoriesRes.json()
-          setApiCategories(data.categories || [])
+          const cats = data.categories || []
+          setApiCategories(cats)
+          console.log(`[Page] Loaded ${cats.length} categories from API`)
         }
+
         if (footerAdsRes.ok) {
           const data = await footerAdsRes.json()
           setApiFooterAds(data.footerAds || [])
@@ -189,7 +198,7 @@ export default function XtubeHome() {
         }
         setApiLoaded(true)
       } catch (err) {
-        console.error('Error fetching initial data:', err)
+        console.error('[Page] Error fetching initial data:', err)
         setApiLoaded(true)
       }
     }

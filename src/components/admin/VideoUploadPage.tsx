@@ -208,9 +208,9 @@ export function VideoUploadPage() {
 
   const handleResetUpload = useCallback(() => {
     setUploadStage('idle'); setUploadProgress(0); setFileInfo(null); setTitle('')
-    setDescription(''); setCategory('');     setQuality('720p'); setDuration('')
+    setDescription(''); setCategory(''); setQuality('720p'); setDuration('')
     setIsFeatured(false); setIsTrending(false); setIsLive(false); setSelectedThumbnail(0)
-    setVideoFile(null); setVideoUrl(''); setThumbnailUrl(''); setLocalThumbnailUrl('')
+    setVideoFile(null); setVideoUrl(''); setThumbnailUrl('')
     setThumbnailBlob(null); setPreviewVideoUrl(''); setLocalThumbnailUrls([]); setCurrentTime(0); setVideoDuration(0)
     setIsPlaying(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -255,13 +255,22 @@ export function VideoUploadPage() {
 
   const handlePublishVideo = useCallback(async () => {
     if (!title.trim() || !category) { toast.error('Title and Category required'); return }
+    if (!videoUrl) { toast.error('Video upload not complete. Please wait.'); return }
     setIsPublishing(true)
     try {
       let finalThumbUrl = thumbnailUrl
       if (thumbnailBlob && !thumbnailUrl) {
-        const thumbRes = await uploadFile(thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
-        finalThumbUrl = thumbRes.url
-        setThumbnailUrl(thumbRes.url)
+        try {
+          const thumbRes = await uploadFile(thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+          finalThumbUrl = thumbRes.url
+          setThumbnailUrl(thumbRes.url)
+        } catch (thumbErr) {
+          console.warn('Thumbnail upload failed, using fallback:', thumbErr)
+          finalThumbUrl = `https://picsum.photos/seed/${Date.now()}/640/360`
+        }
+      }
+      if (!finalThumbUrl) {
+        finalThumbUrl = `https://picsum.photos/seed/${Date.now()}/640/360`
       }
       const res = await fetch('/api/videos', {
         method: 'POST',
@@ -269,25 +278,32 @@ export function VideoUploadPage() {
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || `Watch ${title.trim()} on Xtube.`,
-          thumbnail: finalThumbUrl || `https://picsum.photos/seed/${Date.now()}/640/360`,
-          videoUrl: videoUrl || 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
-          category, duration: duration || '0:00',
-          isFeatured, isTrending, isLive,
+          thumbnail: finalThumbUrl,
+          videoUrl,
+          category,
+          duration: duration || '0:00',
           isHd: ['1080p', '2k', '4k'].includes(quality),
-          isPublished: true, resolution: quality,
+          isPublished: true,
+          resolution: quality,
         }),
       })
       if (res.ok) {
+        const data = await res.json()
+        console.log('[Publish] Video created:', data.video?.id)
         setPublishSuccess(true)
-        toast.success('Video published!')
+        toast.success('Video published! It will appear in the catalog instantly.')
         setTimeout(() => { handleResetUpload(); setPublishSuccess(false) }, 2000)
       } else {
         const err = await res.json().catch(() => ({}))
-        toast.error(err.error || 'Failed to publish')
+        toast.error(err.error || 'Failed to publish video')
       }
-    } catch { toast.error('Error publishing video') }
-    finally { setIsPublishing(false) }
-  }, [title, description, category, quality, duration, videoUrl, thumbnailUrl, thumbnailBlob, isFeatured, isTrending, isLive, handleResetUpload])
+    } catch (err) {
+      console.error('[Publish] Error:', err)
+      toast.error('Error publishing video')
+    } finally {
+      setIsPublishing(false)
+    }
+  }, [title, description, category, quality, duration, videoUrl, thumbnailUrl, thumbnailBlob, handleResetUpload])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
