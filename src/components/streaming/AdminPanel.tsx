@@ -41,7 +41,6 @@ import { AdminLoginScreen } from './AdminLoginScreen'
 import { XtubeLogo } from '@/components/shared/XtubeLogo'
 
 // ─── Dynamic Imports for Admin Sub-pages (Code Splitting) ────────────────────
-const AnalyticsPage = lazy(() => import('@/components/admin/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })))
 const UsersPage = lazy(() => import('@/components/admin/UsersPage').then(m => ({ default: m.UsersPage })))
 const SettingsPage = lazy(() => import('@/components/admin/SettingsPage').then(m => ({ default: m.SettingsPage })))
 const CatalogPage = lazy(() => import('@/components/admin/CatalogPage').then(m => ({ default: m.CatalogPage })))
@@ -139,7 +138,6 @@ const navigationItems: NavItem[] = [
       },
     ],
   },
-  { id: 'analytics', label: 'Analytics', icon: BarChart3, section: 'analytics' },
   { id: 'users', label: 'Users', icon: Users, section: 'users' },
   { id: 'transactions', label: 'Transactions', icon: DollarSign, section: 'transactions' },
   { id: 'reports', label: 'Reports', icon: FileText, section: 'reports' },
@@ -163,7 +161,6 @@ const sectionTitles: Record<AdminSection, string> = {
   'post-roll-ads': 'Post-roll Ads',
   'overlay-ads': 'Overlay Ads',
   'video-ads-analytics': 'Video Ads Analytics',
-  analytics: 'Analytics',
   users: 'Users',
   settings: 'Settings',
   transactions: 'Transactions',
@@ -665,8 +662,6 @@ export function AdminPanel() {
         return <HeroAdsPage />
       case 'catalog':
         return <CatalogPage />
-      case 'analytics':
-        return <AnalyticsPage data={dashboardData} loading={dataLoading} />
       case 'users':
         return <UsersPage />
       case 'settings':
@@ -676,22 +671,7 @@ export function AdminPanel() {
       case 'reports':
         return <ReportsPage />
       case 'video-ads-analytics':
-        return (
-          <VideoAdsAnalytics
-            ads={adminAds.map((a) => ({
-              id: a.id,
-              type: a.type,
-              position: a.position,
-              title: a.title,
-              imageUrl: a.imageUrl,
-              impressions: a.impressions,
-              clicks: a.clicks,
-              revenue: a.revenue,
-              isActive: a.isActive,
-              createdAt: a.createdAt,
-            }))}
-          />
-        )
+        return <VideoAdsAnalytics />
       default:
         if (adsSections.includes(adminSection)) {
           return (

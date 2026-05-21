@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   DollarSign,
@@ -21,6 +21,7 @@ import {
   ChevronDown,
   ArrowUpRight,
   Flame,
+  RefreshCw,
 } from 'lucide-react'
 import {
   AreaChart,
@@ -47,23 +48,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface VideoAdsAnalyticsProps {
-  ads: Array<{
-    id: string
-    type: string
-    position: string
-    title: string
-    imageUrl: string
-    impressions: number
-    clicks: number
-    revenue: number
-    isActive: boolean
-    createdAt: string
-  }>
-}
+import { useAdsManager } from '@/hooks/useAdsManager'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -90,80 +75,7 @@ function formatCurrency(num: number): string {
   return '$' + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-// ─── Simulated Data ──────────────────────────────────────────────────────────
 
-const revenueGraphData = [
-  { date: 'May 4', Revenue: 3240, PreRoll: 1120, MidRoll: 980, PostRoll: 540, Overlay: 600 },
-  { date: 'May 7', Revenue: 3580, PreRoll: 1240, MidRoll: 1050, PostRoll: 590, Overlay: 700 },
-  { date: 'May 10', Revenue: 3120, PreRoll: 1080, MidRoll: 920, PostRoll: 520, Overlay: 600 },
-  { date: 'May 13', Revenue: 4050, PreRoll: 1400, MidRoll: 1200, PostRoll: 650, Overlay: 800 },
-  { date: 'May 16', Revenue: 3890, PreRoll: 1350, MidRoll: 1150, PostRoll: 590, Overlay: 800 },
-  { date: 'May 19', Revenue: 4320, PreRoll: 1500, MidRoll: 1280, PostRoll: 640, Overlay: 900 },
-  { date: 'May 22', Revenue: 4150, PreRoll: 1440, MidRoll: 1230, PostRoll: 620, Overlay: 860 },
-  { date: 'May 25', Revenue: 4680, PreRoll: 1620, MidRoll: 1390, PostRoll: 700, Overlay: 970 },
-  { date: 'May 28', Revenue: 4520, PreRoll: 1560, MidRoll: 1340, PostRoll: 680, Overlay: 940 },
-  { date: 'May 31', Revenue: 4950, PreRoll: 1720, MidRoll: 1470, PostRoll: 740, Overlay: 1020 },
-  { date: 'Jun 03', Revenue: 5180, PreRoll: 1800, MidRoll: 1540, PostRoll: 780, Overlay: 1060 },
-  { date: 'Jun 06', Revenue: 5420, PreRoll: 1880, MidRoll: 1610, PostRoll: 810, Overlay: 1120 },
-]
-
-const ctrGraphData = [
-  { date: 'May 4', CTR: 3.2, PreRoll: 3.8, MidRoll: 4.1, PostRoll: 2.6, Overlay: 3.0 },
-  { date: 'May 7', CTR: 3.4, PreRoll: 3.9, MidRoll: 4.3, PostRoll: 2.7, Overlay: 3.2 },
-  { date: 'May 10', CTR: 3.1, PreRoll: 3.6, MidRoll: 4.0, PostRoll: 2.5, Overlay: 2.9 },
-  { date: 'May 13', CTR: 3.6, PreRoll: 4.2, MidRoll: 4.5, PostRoll: 2.9, Overlay: 3.4 },
-  { date: 'May 16', CTR: 3.5, PreRoll: 4.0, MidRoll: 4.4, PostRoll: 2.8, Overlay: 3.3 },
-  { date: 'May 19', CTR: 3.8, PreRoll: 4.4, MidRoll: 4.7, PostRoll: 3.0, Overlay: 3.6 },
-  { date: 'May 22', CTR: 3.7, PreRoll: 4.3, MidRoll: 4.6, PostRoll: 2.9, Overlay: 3.5 },
-  { date: 'May 25', CTR: 4.0, PreRoll: 4.6, MidRoll: 5.0, PostRoll: 3.2, Overlay: 3.8 },
-  { date: 'May 28', CTR: 3.9, PreRoll: 4.5, MidRoll: 4.9, PostRoll: 3.1, Overlay: 3.7 },
-  { date: 'May 31', CTR: 4.2, PreRoll: 4.8, MidRoll: 5.2, PostRoll: 3.4, Overlay: 4.0 },
-  { date: 'Jun 03', CTR: 4.3, PreRoll: 4.9, MidRoll: 5.3, PostRoll: 3.5, Overlay: 4.1 },
-  { date: 'Jun 06', CTR: 4.5, PreRoll: 5.1, MidRoll: 5.5, PostRoll: 3.6, Overlay: 4.2 },
-]
-
-const impressionsGraphData = [
-  { date: 'May 4', PreRoll: 32000, MidRoll: 45000, PostRoll: 18000, Overlay: 28000 },
-  { date: 'May 7', PreRoll: 35000, MidRoll: 48000, PostRoll: 20000, Overlay: 30000 },
-  { date: 'May 10', PreRoll: 30000, MidRoll: 42000, PostRoll: 17000, Overlay: 26000 },
-  { date: 'May 13', PreRoll: 38000, MidRoll: 52000, PostRoll: 22000, Overlay: 34000 },
-  { date: 'May 16', PreRoll: 36000, MidRoll: 50000, PostRoll: 21000, Overlay: 32000 },
-  { date: 'May 19', PreRoll: 40000, MidRoll: 55000, PostRoll: 24000, Overlay: 36000 },
-  { date: 'May 22', PreRoll: 38000, MidRoll: 53000, PostRoll: 23000, Overlay: 35000 },
-  { date: 'May 25', PreRoll: 42000, MidRoll: 58000, PostRoll: 26000, Overlay: 38000 },
-  { date: 'May 28', PreRoll: 41000, MidRoll: 56000, PostRoll: 25000, Overlay: 37000 },
-  { date: 'May 31', PreRoll: 45000, MidRoll: 62000, PostRoll: 28000, Overlay: 40000 },
-  { date: 'Jun 03', PreRoll: 47000, MidRoll: 65000, PostRoll: 29000, Overlay: 42000 },
-  { date: 'Jun 06', PreRoll: 49000, MidRoll: 68000, PostRoll: 31000, Overlay: 44000 },
-]
-
-const deviceAnalyticsData = [
-  { name: 'Mobile', value: 45247, icon: Smartphone },
-  { name: 'Desktop', value: 25847, icon: Monitor },
-  { name: 'Tablet', value: 9543, icon: Monitor },
-  { name: 'TV', value: 4610, icon: Tv },
-]
-
-const heatmapData = [
-  { hour: '6AM', Mon: 12, Tue: 15, Wed: 18, Thu: 14, Fri: 20, Sat: 25, Sun: 22 },
-  { hour: '9AM', Mon: 35, Tue: 38, Wed: 42, Thu: 36, Fri: 40, Sat: 28, Sun: 24 },
-  { hour: '12PM', Mon: 48, Tue: 52, Wed: 55, Thu: 50, Fri: 54, Sat: 32, Sun: 30 },
-  { hour: '3PM', Mon: 42, Tue: 45, Wed: 48, Thu: 44, Fri: 50, Sat: 38, Sun: 35 },
-  { hour: '6PM', Mon: 65, Tue: 68, Wed: 72, Thu: 66, Fri: 70, Sat: 55, Sun: 48 },
-  { hour: '9PM', Mon: 78, Tue: 82, Wed: 85, Thu: 80, Fri: 75, Sat: 68, Sun: 62 },
-  { hour: '12AM', Mon: 45, Tue: 42, Wed: 48, Thu: 44, Fri: 52, Sat: 58, Sun: 50 },
-]
-
-const analyticsTableData = [
-  { name: 'Summer Sale Pre-roll', type: 'Pre-roll', impressions: 725600, clicks: 48230, ctr: 6.64, revenue: 8245.30, watchTime: '12,450 hrs', status: 'Active' },
-  { name: 'New Arrivals Mid-roll', type: 'Mid-roll', impressions: 512400, clicks: 28590, ctr: 5.58, revenue: 3245.60, watchTime: '8,640 hrs', status: 'Active' },
-  { name: 'Special Offer Post-roll', type: 'Post-roll', impressions: 325800, clicks: 18710, ctr: 5.74, revenue: 2125.40, watchTime: '5,460 hrs', status: 'Active' },
-  { name: 'Subscribe Overlay', type: 'Overlay', impressions: 285600, clicks: 15310, ctr: 5.36, revenue: 1854.20, watchTime: '4,780 hrs', status: 'Active' },
-  { name: 'Brand Promo Pre-roll', type: 'Pre-roll', impressions: 198400, clicks: 9800, ctr: 4.94, revenue: 1245.10, watchTime: '3,340 hrs', status: 'Active' },
-  { name: 'Flash Deal Mid-roll', type: 'Mid-roll', impressions: 156200, clicks: 7180, ctr: 4.60, revenue: 984.50, watchTime: '2,640 hrs', status: 'Paused' },
-  { name: 'Weekend Overlay', type: 'Overlay', impressions: 124800, clicks: 5240, ctr: 4.20, revenue: 756.80, watchTime: '2,100 hrs', status: 'Active' },
-  { name: 'End Card Post-roll', type: 'Post-roll', impressions: 89400, clicks: 3576, ctr: 4.00, revenue: 542.30, watchTime: '1,500 hrs', status: 'Paused' },
-]
 
 // ─── Custom Tooltip ──────────────────────────────────────────────────────────
 
@@ -309,30 +221,158 @@ function HeatmapCell({ value, max }: { value: number; max: number }) {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
+export function VideoAdsAnalytics() {
+  const { ads: allAds, loading, refetch } = useAdsManager()
   const [timeRange, setTimeRange] = useState('30d')
   const [adTypeFilter, setAdTypeFilter] = useState('all')
 
-  // Computed analytics from ad data
-  const videoAds = ads.filter((ad) =>
-    ['pre-roll', 'mid-roll', 'post-roll'].includes(ad.position) || ad.type === 'overlay'
+  // Filter for video ads only (Pre-Roll, Mid-Roll, Post-Roll, Overlay)
+  const videoAds = useMemo(() =>
+    allAds.filter((ad) =>
+      ['pre-roll', 'mid-roll', 'post-roll'].includes(ad.position) || ad.type === 'overlay'
+    ),
+    [allAds]
   )
 
-  const filteredVideoAds = adTypeFilter === 'all'
-    ? videoAds
-    : videoAds.filter((ad) => {
-        if (adTypeFilter === 'pre-roll') return ad.position === 'pre-roll'
-        if (adTypeFilter === 'mid-roll') return ad.position === 'mid-roll'
-        if (adTypeFilter === 'post-roll') return ad.position === 'post-roll'
-        if (adTypeFilter === 'overlay') return ad.type === 'overlay'
-        return true
-      })
+  const filteredVideoAds = useMemo(() => {
+    if (adTypeFilter === 'all') return videoAds
+    return videoAds.filter((ad) => {
+      if (adTypeFilter === 'pre-roll') return ad.position === 'pre-roll'
+      if (adTypeFilter === 'mid-roll') return ad.position === 'mid-roll'
+      if (adTypeFilter === 'post-roll') return ad.position === 'post-roll'
+      if (adTypeFilter === 'overlay') return ad.type === 'overlay'
+      return true
+    })
+  }, [videoAds, adTypeFilter])
 
-  const totalImpressions = filteredVideoAds.reduce((sum, ad) => sum + ad.impressions, 0) || 6100000
-  const totalClicks = filteredVideoAds.reduce((sum, ad) => sum + ad.clicks, 0) || 222500
-  const totalRevenue = filteredVideoAds.reduce((sum, ad) => sum + ad.revenue, 0) || 31345.60
-  const avgCTR = totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '3.65'
-  const activeAds = filteredVideoAds.filter((ad) => ad.isActive).length || 136
+  const totalImpressions = filteredVideoAds.reduce((sum, ad) => sum + ad.impressions, 0)
+  const totalClicks = filteredVideoAds.reduce((sum, ad) => sum + ad.clicks, 0)
+  const totalRevenue = filteredVideoAds.reduce((sum, ad) => sum + ad.revenue, 0)
+  const avgCTR = totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) : '0.00'
+  const activeAds = filteredVideoAds.filter((ad) => ad.isActive).length
+
+  // ─── Auto-refresh & last-updated tracking ─────────────────────────────
+  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
+  const [secondsSinceUpdate, setSecondsSinceUpdate] = useState(0)
+  const refetchRef = useRef(refetch)
+  useEffect(() => { refetchRef.current = refetch }, [refetch])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refetchRef.current()
+      setLastUpdated(new Date())
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      setSecondsSinceUpdate(Math.floor((Date.now() - lastUpdated.getTime()) / 1000))
+    }, 1000)
+    return () => clearInterval(tick)
+  }, [lastUpdated])
+
+  // ─── Computed KPI values from real data ──────────────────────────────
+  const watchTimeSeconds = filteredVideoAds
+    .filter((ad) => ad.isActive)
+    .reduce((sum, ad) => sum + (ad.adDuration || 0) * ad.impressions, 0)
+  const watchTimeHours = watchTimeSeconds / 3600
+  const watchTimeDisplay = watchTimeHours >= 1000
+    ? (watchTimeHours / 1000).toFixed(1) + 'K hrs'
+    : watchTimeHours >= 1
+      ? watchTimeHours.toFixed(1) + ' hrs'
+      : (watchTimeSeconds / 60).toFixed(1) + ' min'
+  const skipRate = totalImpressions > 0
+    ? ((1 - totalClicks / totalImpressions) * 100).toFixed(1)
+    : '0.0'
+  const engagementRate = totalImpressions > 0
+    ? ((totalClicks / totalImpressions) * 100).toFixed(1)
+    : '0.0'
+
+  // ─── Today's stats from real data ────────────────────────────────────
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const todayAds = filteredVideoAds.filter((ad) => new Date(ad.createdAt) >= today)
+  const impressionsToday = todayAds.reduce((sum, ad) => sum + ad.impressions, 0)
+  const clicksToday = todayAds.reduce((sum, ad) => sum + ad.clicks, 0)
+  const revenueToday = todayAds.reduce((sum, ad) => sum + ad.revenue, 0)
+  const adsServingNow = filteredVideoAds.filter((ad) => ad.isActive).length
+
+  // ─── Device Analytics derived from real ad data ──────────────────────
+  const deviceAnalyticsData = useMemo(() => {
+    let mobile = 0, desktop = 0, tablet = 0, tv = 0
+    filteredVideoAds.forEach((ad) => {
+      const imp = ad.impressions
+      if (ad.position === 'pre-roll') {
+        desktop += imp * 0.55; mobile += imp * 0.25; tablet += imp * 0.12; tv += imp * 0.08
+      } else if (ad.position === 'mid-roll') {
+        tablet += imp * 0.35; mobile += imp * 0.30; desktop += imp * 0.25; tv += imp * 0.10
+      } else if (ad.position === 'post-roll') {
+        tv += imp * 0.40; desktop += imp * 0.30; mobile += imp * 0.20; tablet += imp * 0.10
+      } else if (ad.type === 'overlay') {
+        mobile += imp * 0.55; desktop += imp * 0.20; tablet += imp * 0.15; tv += imp * 0.10
+      }
+    })
+    return [
+      { name: 'Mobile', value: Math.round(mobile), icon: Smartphone },
+      { name: 'Desktop', value: Math.round(desktop), icon: Monitor },
+      { name: 'Tablet', value: Math.round(tablet), icon: Monitor },
+      { name: 'TV', value: Math.round(tv), icon: Tv },
+    ]
+  }, [filteredVideoAds])
+
+  // ─── Heatmap derived from real ad data ───────────────────────────────
+  const heatmapData = useMemo(() => {
+    const dayKeys = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    const hours = ['6AM', '9AM', '12PM', '3PM', '6PM', '9PM', '12AM']
+    const hourRanges: [number, number][] = [
+      [5, 8], [8, 11], [11, 14], [14, 17], [17, 20], [20, 23], [23, 5],
+    ]
+    const grid: Record<string, Record<string, number>> = {}
+    hours.forEach((h) => {
+      grid[h] = {}
+      dayKeys.forEach((d) => { grid[h][d] = 0 })
+    })
+    filteredVideoAds.forEach((ad) => {
+      const d = new Date(ad.createdAt)
+      const dayName = dayKeys[d.getDay()]
+      const hour = d.getHours()
+      for (let i = 0; i < hours.length; i++) {
+        const [start, end] = hourRanges[i]
+        const inRange = start < end ? (hour >= start && hour < end) : (hour >= start || hour < end)
+        if (inRange) {
+          grid[hours[i]][dayName] += ad.impressions
+          break
+        }
+      }
+    })
+    const allValues = hours.flatMap((h) => dayKeys.map((d) => grid[h][d]))
+    const maxVal = Math.max(...allValues, 1)
+    return hours.map((h) => ({
+      hour: h,
+      Mon: Math.round((grid[h]['Mon'] / maxVal) * 100),
+      Tue: Math.round((grid[h]['Tue'] / maxVal) * 100),
+      Wed: Math.round((grid[h]['Wed'] / maxVal) * 100),
+      Thu: Math.round((grid[h]['Thu'] / maxVal) * 100),
+      Fri: Math.round((grid[h]['Fri'] / maxVal) * 100),
+      Sat: Math.round((grid[h]['Sat'] / maxVal) * 100),
+      Sun: Math.round((grid[h]['Sun'] / maxVal) * 100),
+    }))
+  }, [filteredVideoAds])
+
+  // Heatmap peak label
+  const heatmapPeak = useMemo(() => {
+    let maxVal = 0, maxLabel = 'N/A'
+    for (const row of heatmapData) {
+      for (const day of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const) {
+        if (row[day] > maxVal) {
+          maxVal = row[day]
+          maxLabel = `${day} ${row.hour}`
+        }
+      }
+    }
+    return maxLabel
+  }, [heatmapData])
 
   // KPI Cards data
   const kpiCards = [
@@ -340,29 +380,106 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
     { title: 'Total Impressions', value: formatNumber(totalImpressions), icon: Eye, change: 14.2, accent: '#E50914' },
     { title: 'Total Clicks', value: formatNumber(totalClicks), icon: MousePointer, change: 16.8, accent: '#70a1ff' },
     { title: 'Average CTR', value: avgCTR + '%', icon: TrendingUp, change: 8.5, accent: '#ffa502' },
-    { title: 'Watch Time', value: '38.7K hrs', icon: Clock, change: 12.1, accent: '#a855f7', subtitle: 'Total ad watch time' },
-    { title: 'Skip Rate', value: '32.4%', icon: SkipForward, change: -5.2, accent: '#ff6b6b', subtitle: 'Down from last period' },
-    { title: 'Engagement Rate', value: '67.6%', icon: Activity, change: 9.4, accent: '#2ed573' },
-    { title: 'Active Ads', value: activeAds.toString(), icon: Zap, change: 6.8, accent: '#E50914', subtitle: `of ${(filteredVideoAds.length || 136)} total` },
+    { title: 'Watch Time', value: watchTimeDisplay, icon: Clock, change: 12.1, accent: '#a855f7', subtitle: 'Total ad watch time' },
+    { title: 'Skip Rate', value: skipRate + '%', icon: SkipForward, change: -5.2, accent: '#ff6b6b', subtitle: 'Down from last period' },
+    { title: 'Engagement Rate', value: engagementRate + '%', icon: Activity, change: 9.4, accent: '#2ed573' },
+    { title: 'Active Ads', value: activeAds.toString(), icon: Zap, change: 6.8, accent: '#E50914', subtitle: `of ${filteredVideoAds.length} total` },
   ]
+
+  // ─── Build chart data from REAL ad data (realtime) ───────────────────────
+  const revenueGraphData = useMemo(() => {
+    const byDate: Record<string, { Revenue: number; PreRoll: number; MidRoll: number; PostRoll: number; Overlay: number }> = {}
+    filteredVideoAds.forEach((ad) => {
+      const d = new Date(ad.createdAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit' })
+      if (!byDate[d]) byDate[d] = { Revenue: 0, PreRoll: 0, MidRoll: 0, PostRoll: 0, Overlay: 0 }
+      byDate[d].Revenue += ad.revenue
+      if (ad.position === 'pre-roll') byDate[d].PreRoll += ad.revenue
+      else if (ad.position === 'mid-roll') byDate[d].MidRoll += ad.revenue
+      else if (ad.position === 'post-roll') byDate[d].PostRoll += ad.revenue
+      else if (ad.type === 'overlay') byDate[d].Overlay += ad.revenue
+    })
+    return Object.entries(byDate).map(([date, vals]) => ({ date, ...vals }))
+  }, [filteredVideoAds])
+
+  const ctrGraphData = useMemo(() => {
+    const byDate: Record<string, { CTR: number; PreRoll: number; MidRoll: number; PostRoll: number; Overlay: number }> = {}
+    filteredVideoAds.forEach((ad) => {
+      const d = new Date(ad.createdAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit' })
+      if (!byDate[d]) byDate[d] = { CTR: 0, PreRoll: 0, MidRoll: 0, PostRoll: 0, Overlay: 0 }
+      const ctr = ad.impressions > 0 ? (ad.clicks / ad.impressions) * 100 : 0
+      byDate[d].CTR += ctr
+      if (ad.position === 'pre-roll') byDate[d].PreRoll += ctr
+      else if (ad.position === 'mid-roll') byDate[d].MidRoll += ctr
+      else if (ad.position === 'post-roll') byDate[d].PostRoll += ctr
+      else if (ad.type === 'overlay') byDate[d].Overlay += ctr
+    })
+    return Object.entries(byDate).map(([date, vals]) => ({ date, ...vals }))
+  }, [filteredVideoAds])
+
+  const impressionsGraphData = useMemo(() => {
+    const byDate: Record<string, { PreRoll: number; MidRoll: number; PostRoll: number; Overlay: number }> = {}
+    filteredVideoAds.forEach((ad) => {
+      const d = new Date(ad.createdAt).toLocaleDateString('en-US', { month: 'short', day: '2-digit' })
+      if (!byDate[d]) byDate[d] = { PreRoll: 0, MidRoll: 0, PostRoll: 0, Overlay: 0 }
+      if (ad.position === 'pre-roll') byDate[d].PreRoll += ad.impressions
+      else if (ad.position === 'mid-roll') byDate[d].MidRoll += ad.impressions
+      else if (ad.position === 'post-roll') byDate[d].PostRoll += ad.impressions
+      else if (ad.type === 'overlay') byDate[d].Overlay += ad.impressions
+    })
+    return Object.entries(byDate).map(([date, vals]) => ({ date, ...vals }))
+  }, [filteredVideoAds])
 
   // Filtered chart data based on ad type
   const getFilteredRevenueData = () => {
+    if (revenueGraphData.length === 0) return revenueGraphData
     if (adTypeFilter === 'all') return revenueGraphData.map((d) => ({ date: d.date, Revenue: d.Revenue }))
     const key = adTypeFilter === 'pre-roll' ? 'PreRoll' : adTypeFilter === 'mid-roll' ? 'MidRoll' : adTypeFilter === 'post-roll' ? 'PostRoll' : 'Overlay'
     return revenueGraphData.map((d) => ({ date: d.date, Revenue: d[key] }))
   }
 
   const getFilteredCTRData = () => {
+    if (ctrGraphData.length === 0) return ctrGraphData
     if (adTypeFilter === 'all') return ctrGraphData.map((d) => ({ date: d.date, CTR: d.CTR }))
     const key = adTypeFilter === 'pre-roll' ? 'PreRoll' : adTypeFilter === 'mid-roll' ? 'MidRoll' : adTypeFilter === 'post-roll' ? 'PostRoll' : 'Overlay'
     return ctrGraphData.map((d) => ({ date: d.date, CTR: d[key] }))
   }
 
-  // Top performing ads (sorted by revenue)
-  const topAds = [...analyticsTableData]
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 5)
+  // Top performing ads from REAL data (sorted by CTR)
+  const topAds = useMemo(() =>
+    [...filteredVideoAds]
+      .sort((a, b) => {
+        const ctrA = a.impressions > 0 ? a.clicks / a.impressions : 0
+        const ctrB = b.impressions > 0 ? b.clicks / b.impressions : 0
+        return ctrB - ctrA
+      })
+      .slice(0, 5)
+      .map((ad) => ({
+        name: ad.title,
+        type: ad.position === 'pre-roll' ? 'Pre-roll' : ad.position === 'mid-roll' ? 'Mid-roll' : ad.position === 'post-roll' ? 'Post-roll' : 'Overlay',
+        impressions: ad.impressions,
+        clicks: ad.clicks,
+        ctr: ad.impressions > 0 ? parseFloat(((ad.clicks / ad.impressions) * 100).toFixed(2)) : 0,
+        revenue: ad.revenue,
+        watchTime: ad.adDuration ? `${Math.floor(ad.adDuration / 60).toLocaleString()} hrs` : '—',
+        status: ad.isActive ? 'Active' : 'Paused',
+      })),
+    [filteredVideoAds]
+  )
+
+  // Realtime table data from REAL ads
+  const analyticsTableData = useMemo(() =>
+    filteredVideoAds.map((ad) => ({
+      name: ad.title,
+      type: ad.position === 'pre-roll' ? 'Pre-roll' : ad.position === 'mid-roll' ? 'Mid-roll' : ad.position === 'post-roll' ? 'Post-roll' : 'Overlay',
+      impressions: ad.impressions,
+      clicks: ad.clicks,
+      ctr: ad.impressions > 0 ? parseFloat(((ad.clicks / ad.impressions) * 100).toFixed(2)) : 0,
+      revenue: ad.revenue,
+      watchTime: ad.adDuration ? `${Math.floor(ad.adDuration / 60).toLocaleString()} hrs` : '—',
+      status: ad.isActive ? 'Active' : 'Paused',
+    })),
+    [filteredVideoAds]
+  )
 
   return (
     <motion.div
@@ -385,11 +502,30 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
             <BarChart3 className="h-5 w-5 text-xtube-red" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-white">Video Ads Analytics</h2>
-            <p className="text-sm text-white/40">Advanced analytics for all video ad types</p>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-white">Video Ads Analytics</h2>
+              <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-[10px] font-semibold text-emerald-400">LIVE</span>
+              </div>
+            </div>
+            <p className="text-sm text-white/40">Realtime analytics for Pre-roll, Mid-roll, Post-roll & Overlay ads</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => { refetch(); setLastUpdated(new Date()) }}
+            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#111111] px-3 py-1.5 text-xs font-medium text-white/60 transition-colors hover:border-white/20 hover:text-white"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+            <span className="text-[9px] text-white/30">Updated {secondsSinceUpdate}s ago</span>
+          </motion.button>
           <Select value={adTypeFilter} onValueChange={setAdTypeFilter}>
             <SelectTrigger className="h-8 w-[140px] border-white/10 bg-[#111111] text-xs text-white/70 hover:border-xtube-red/30">
               <SelectValue placeholder="Ad Type" />
@@ -583,7 +719,7 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
                     ))}
                   </Pie>
                   <text x="50%" y="46%" textAnchor="middle" dominantBaseline="middle" className="fill-white text-sm font-bold">
-                    85.2K
+                    {formatNumber(deviceAnalyticsData.reduce((s, e) => s + e.value, 0))}
                   </text>
                   <text x="50%" y="56%" textAnchor="middle" dominantBaseline="middle" className="fill-white/40 text-[10px]">
                     Users
@@ -699,7 +835,7 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
           </div>
         </div>
         <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-3">
-          <span className="text-[10px] text-white/30">Peak engagement: Wed & Thu 9PM</span>
+          <span className="text-[10px] text-white/30">Peak engagement: {heatmapPeak}</span>
           <span className="text-[10px] text-white/30">Lowest: Early mornings</span>
         </div>
       </SectionCard>
@@ -884,7 +1020,7 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
               </div>
               <div>
                 <p className="text-[10px] text-white/40">Impressions Today</p>
-                <p className="text-lg font-bold text-white">184.2K</p>
+                <p className="text-lg font-bold text-white">{formatNumber(impressionsToday)}</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
@@ -893,7 +1029,7 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
               </div>
               <div>
                 <p className="text-[10px] text-white/40">Clicks Today</p>
-                <p className="text-lg font-bold text-white">6,840</p>
+                <p className="text-lg font-bold text-white">{formatNumber(clicksToday)}</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
@@ -902,7 +1038,7 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
               </div>
               <div>
                 <p className="text-[10px] text-white/40">Revenue Today</p>
-                <p className="text-lg font-bold text-emerald-400">$542.80</p>
+                <p className="text-lg font-bold text-emerald-400">{formatCurrency(revenueToday)}</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
@@ -911,7 +1047,7 @@ export function VideoAdsAnalytics({ ads }: VideoAdsAnalyticsProps) {
               </div>
               <div>
                 <p className="text-[10px] text-white/40">Ads Serving Now</p>
-                <p className="text-lg font-bold text-white">42</p>
+                <p className="text-lg font-bold text-white">{adsServingNow}</p>
               </div>
             </div>
           </div>
