@@ -1,8 +1,11 @@
 import { PrismaClient } from '@prisma/client'
 
-// Ensure DATABASE_URL is set correctly for SQLite
-if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.startsWith('file:')) {
-  process.env.DATABASE_URL = 'file:/home/z/my-project/db/custom.db'
+// Ensure DATABASE_URL is set correctly for Supabase PostgreSQL fallback
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = "postgresql://postgres.vdbrdgheycebtgxavpst:sayankarmakar159%40gmail.com@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true";
+}
+if (!process.env.DIRECT_URL) {
+  process.env.DIRECT_URL = "postgresql://postgres.vdbrdgheycebtgxavpst:sayankarmakar159%40gmail.com@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres";
 }
 
 const globalForPrisma = globalThis as unknown as {

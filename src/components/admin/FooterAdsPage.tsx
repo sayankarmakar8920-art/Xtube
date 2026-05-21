@@ -3,6 +3,9 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useFooterAds, type FooterAdItem } from '@/hooks/useAdsManager'
 import { motion, AnimatePresence } from 'framer-motion'
+import { uploadFile } from '@/lib/storage/upload-helper'
+import { extractVideoMetadataAndThumbnail } from '@/lib/storage/thumbnail-helper'
+import { toast } from 'sonner'
 import {
   CloudUpload,
   Upload,
@@ -202,41 +205,66 @@ export function FooterAdsPage() {
   const totalClicks = footerAds.reduce((sum, ad) => sum + ad.clicks, 0)
   const avgCtr = totalAds > 0 ? footerAds.reduce((sum, ad) => sum + ad.ctr, 0) / totalAds : 0
 
-  // ─── Simulated Upload ──────────────────────────────────────────────────
+  // Real Upload states
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
+  const [mediaUrl, setMediaUrl] = useState('')
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
 
-  const simulateUpload = useCallback((fileName: string) => {
-    setUploadStage('uploading')
-    setUploadProgress(0)
-    setUploadedSize('0 GB')
+  const handleFileProcess = useCallback(async (file: File) => {
+    if (!file) return
+    setMediaFile(file)
+    const isVideo = file.type.startsWith('video/')
+    setUploadStage('processing')
 
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+    try {
+      let resolvedThumbnailUrl = ''
+      let videoMeta = null
 
-    let progress = 0
-    const totalSize = 5.0
-
-    progressIntervalRef.current = setInterval(() => {
-      const increment = Math.random() * 4 + 1
-      progress = Math.min(progress + increment, 100)
-      setUploadProgress(progress)
-
-      const uploaded = (progress / 100) * totalSize
-      setUploadedSize(`${uploaded.toFixed(2)} GB`)
-      setUploadSpeed(`${(Math.random() * 2 + 1.5).toFixed(1)} MB/s`)
-
-      const remaining = ((100 - progress) / increment) * 0.15
-      setUploadRemaining(remaining > 60 ? `${Math.ceil(remaining / 60)} mins left` : `${Math.ceil(remaining)} secs left`)
-
-      if (progress >= 100) {
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
-        setUploadStage('processing')
-        setTimeout(() => setUploadStage('success'), 1500)
+      if (isVideo) {
+        try {
+          videoMeta = await extractVideoMetadataAndThumbnail(file)
+        } catch (err) {
+          console.error('Failed to extract video thumbnail:', err)
+        }
       }
-    }, 150)
-  }, [])
 
-  useEffect(() => {
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+      setUploadStage('uploading')
+
+      const category = 'ad'
+      const uploadRes = await uploadFile(file, category, file.name, (progress, speed, remaining) => {
+        setUploadProgress(progress)
+        setUploadSpeed(speed || '0 MB/s')
+        setUploadRemaining(remaining || '')
+        const uploaded = (progress / 100) * file.size
+        const uploadedGB = uploaded / (1024 * 1024 * 1024)
+        if (uploadedGB >= 0.1) {
+          setUploadedSize(`${uploadedGB.toFixed(2)} GB`)
+        } else {
+          setUploadedSize(`${(uploaded / (1024 * 1024)).toFixed(1)} MB`)
+        }
+      })
+
+      setMediaUrl(uploadRes.url)
+
+      if (isVideo && videoMeta?.thumbnailBlob) {
+        try {
+          const thumbRes = await uploadFile(videoMeta.thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+          resolvedThumbnailUrl = thumbRes.url
+          setThumbnailUrl(thumbRes.url)
+        } catch (thumbErr) {
+          console.error('Failed to upload video ad thumbnail:', thumbErr)
+        }
+      } else if (!isVideo) {
+        setThumbnailUrl(uploadRes.url)
+      }
+
+      setUploadStage('success')
+      toast.success('Ad file uploaded successfully!')
+    } catch (err) {
+      console.error('Ad upload failed:', err)
+      setUploadStage('idle')
+      setMediaFile(null)
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
@@ -248,13 +276,16 @@ export function FooterAdsPage() {
     e.preventDefault()
     setIsDragOver(false)
     const files = e.dataTransfer.files
-    if (files.length > 0) simulateUpload(files[0].name)
-  }, [simulateUpload])
+    if (files.length > 0) handleFileProcess(files[0])
+  }, [handleFileProcess])
 
   const handleResetUpload = useCallback(() => {
     setUploadStage('idle')
     setUploadProgress(0)
     setSelectedThumbnail(0)
+    setMediaFile(null)
+    setMediaUrl('')
+    setThumbnailUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
@@ -288,6 +319,9 @@ export function FooterAdsPage() {
     setUploadStage('idle')
     setUploadProgress(0)
     setSelectedThumbnail(0)
+    setMediaFile(null)
+    setMediaUrl('')
+    setThumbnailUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
@@ -300,6 +334,8 @@ export function FooterAdsPage() {
     setStartDate(ad.startDate ? ad.startDate.split('T')[0] : '')
     setEndDate(ad.endDate ? ad.endDate.split('T')[0] : '')
     setStatusActive(ad.isActive)
+    setMediaUrl(ad.mediaUrl || '')
+    setThumbnailUrl(ad.thumbnailUrl || '')
     setUploadStage('success')
   }, [])
 
@@ -437,7 +473,7 @@ export function FooterAdsPage() {
                       type="file"
                       accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.zip,application/zip"
                       className="hidden"
-                      onChange={(e) => { if (e.target.files?.length) simulateUpload(e.target.files[0].name) }}
+                      onChange={(e) => { if (e.target.files?.length) handleFileProcess(e.target.files[0]) }}
                     />
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff1e1e]/10">
                       <CloudUpload className="h-6 w-6 text-[#ff1e1e]" />
@@ -729,6 +765,10 @@ export function FooterAdsPage() {
                             isActive: statusActive,
                             startDate: startDate || null,
                             endDate: endDate || null,
+                            mediaUrl: mediaUrl || editingAd.mediaUrl,
+                            thumbnailUrl: thumbnailUrl || editingAd.thumbnailUrl,
+                            adType: mediaFile ? (mediaFile.type.startsWith('video/') ? 'video' : 'image') : editingAd.adType,
+                            mediaFormat: mediaFile ? mediaFile.type : editingAd.mediaFormat,
                           }),
                         })
                         setEditingAd(null)
@@ -737,9 +777,10 @@ export function FooterAdsPage() {
                         await createFooterAd({
                           title: adTitle,
                           linkUrl: adLink || undefined,
-                          adType: 'image',
-                          mediaUrl: 'https://placehold.co/970x250/1a0a2e/ffffff?text=' + encodeURIComponent(adTitle),
-                          mediaFormat: 'image/jpeg',
+                          adType: mediaFile?.type.startsWith('video/') ? 'video' : 'image',
+                          mediaUrl: mediaUrl || 'https://placehold.co/970x250/1a0a2e/ffffff?text=' + encodeURIComponent(adTitle),
+                          thumbnailUrl: thumbnailUrl || null,
+                          mediaFormat: mediaFile?.type || 'image/jpeg',
                           isActive: statusActive,
                           startDate: startDate || null,
                           endDate: endDate || null,

@@ -80,7 +80,22 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { type, position, title, imageUrl, linkUrl, isActive, startDate, endDate, frequency } = body
+    const {
+      type,
+      position,
+      title,
+      imageUrl,
+      linkUrl,
+      isActive,
+      startDate,
+      endDate,
+      frequency,
+      mediaUrl,
+      mediaFormat,
+      adDuration,
+      skipAfter,
+      quality,
+    } = body
 
     const ad = await db.ad.create({
       data: {
@@ -93,6 +108,11 @@ export async function POST(request: NextRequest) {
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
         frequency: frequency || 1,
+        mediaUrl: mediaUrl || null,
+        mediaFormat: mediaFormat || 'jpg',
+        adDuration: adDuration || 0,
+        skipAfter: skipAfter || 5,
+        quality: quality || '720p',
       },
     })
 

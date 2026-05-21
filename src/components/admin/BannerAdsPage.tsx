@@ -3,6 +3,9 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useAdsManager } from '@/hooks/useAdsManager'
 import { motion, AnimatePresence } from 'framer-motion'
+import { uploadFile } from '@/lib/storage/upload-helper'
+import { extractVideoMetadataAndThumbnail } from '@/lib/storage/thumbnail-helper'
+import { toast } from 'sonner'
 import {
   Play,
   Pause,
@@ -180,7 +183,7 @@ function StatCard({
 
 export function BannerAdsPage() {
   // Real data from Supabase
-  const { ads: realAds, loading: adsLoading, deleteAd, toggleAd, createAd } = useAdsManager({ type: 'banner' })
+  const { ads: realAds, loading: adsLoading, deleteAd, toggleAd, createAd, updateAd } = useAdsManager({ type: 'banner' })
 
   // Computed stats from real data
   const totalAds = realAds.length
@@ -230,43 +233,69 @@ export function BannerAdsPage() {
   const [currentPage, setCurrentPage] = useState(1)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ─── Simulated Upload ──────────────────────────────────────────────────
+  // Real Upload states
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
+  const [mediaUrl, setMediaUrl] = useState('')
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editingAd, setEditingAd] = useState<AdItem | null>(null)
 
-  const simulateUpload = useCallback((fileName: string) => {
-    setUploadStage('uploading')
-    setUploadProgress(0)
-    setUploadedSize('0 GB')
+  const handleFileProcess = useCallback(async (file: File) => {
+    if (!file) return
+    setMediaFile(file)
+    const isVideo = file.type.startsWith('video/')
+    setUploadStage('processing')
 
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+    try {
+      let resolvedThumbnailUrl = ''
+      let videoMeta = null
 
-    let progress = 0
-    const totalSize = 5.0
-
-    progressIntervalRef.current = setInterval(() => {
-      const increment = Math.random() * 4 + 1
-      progress = Math.min(progress + increment, 100)
-      setUploadProgress(progress)
-
-      const uploaded = (progress / 100) * totalSize
-      setUploadedSize(`${uploaded.toFixed(2)} GB`)
-      setUploadSpeed(`${(Math.random() * 2 + 1.5).toFixed(1)} MB/s`)
-
-      const remaining = ((100 - progress) / increment) * 0.15
-      setUploadRemaining(remaining > 60 ? `${Math.ceil(remaining / 60)} mins left` : `${Math.ceil(remaining)} secs left`)
-
-      if (progress >= 100) {
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
-        setUploadStage('processing')
-        setTimeout(() => setUploadStage('success'), 1500)
+      if (isVideo) {
+        try {
+          videoMeta = await extractVideoMetadataAndThumbnail(file)
+        } catch (err) {
+          console.error('Failed to extract video thumbnail:', err)
+        }
       }
-    }, 150)
-  }, [])
 
-  useEffect(() => {
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+      setUploadStage('uploading')
+
+      const category = 'ad'
+      const uploadRes = await uploadFile(file, category, file.name, (progress, speed, remaining) => {
+        setUploadProgress(progress)
+        setUploadSpeed(speed || '0 MB/s')
+        setUploadRemaining(remaining || '')
+        const uploaded = (progress / 100) * file.size
+        const uploadedGB = uploaded / (1024 * 1024 * 1024)
+        if (uploadedGB >= 0.1) {
+          setUploadedSize(`${uploadedGB.toFixed(2)} GB`)
+        } else {
+          setUploadedSize(`${(uploaded / (1024 * 1024)).toFixed(1)} MB`)
+        }
+      })
+
+      setMediaUrl(uploadRes.url)
+
+      if (isVideo && videoMeta?.thumbnailBlob) {
+        try {
+          const thumbRes = await uploadFile(videoMeta.thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+          resolvedThumbnailUrl = thumbRes.url
+          setThumbnailUrl(thumbRes.url)
+        } catch (thumbErr) {
+          console.error('Failed to upload video ad thumbnail:', thumbErr)
+        }
+      } else if (!isVideo) {
+        setThumbnailUrl(uploadRes.url)
+      }
+
+      setUploadStage('success')
+      toast.success('Ad file uploaded successfully!')
+    } catch (err) {
+      console.error('Ad upload failed:', err)
+      setUploadStage('idle')
+      setMediaFile(null)
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
@@ -278,15 +307,97 @@ export function BannerAdsPage() {
     e.preventDefault()
     setIsDragOver(false)
     const files = e.dataTransfer.files
-    if (files.length > 0) simulateUpload(files[0].name)
-  }, [simulateUpload])
+    if (files.length > 0) handleFileProcess(files[0])
+  }, [handleFileProcess])
 
   const handleResetUpload = useCallback(() => {
     setUploadStage('idle')
     setUploadProgress(0)
     setSelectedThumbnail(0)
+    setMediaFile(null)
+    setMediaUrl('')
+    setThumbnailUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
+
+  // ─── Reset Form ────────────────────────────────────────────────────────
+
+  const resetForm = useCallback(() => {
+    setBannerName('')
+    setBannerLink('')
+    setBannerSize('970x250')
+    setBannerPosition('top-header')
+    setDeviceDesktop(true)
+    setDeviceTablet(true)
+    setDeviceMobile(true)
+    setStartDate('')
+    setEndDate('')
+    setStatusActive(true)
+    setEditingAd(null)
+    handleResetUpload()
+  }, [handleResetUpload])
+
+  // ─── Edit Callback ─────────────────────────────────────────────────────
+
+  const handleEdit = useCallback((ad: AdItem) => {
+    setEditingAd(ad)
+    setBannerName(ad.title)
+    setBannerLink(ad.linkUrl || '')
+    setBannerPosition(ad.position)
+    setStartDate(ad.startDate ? ad.startDate.split('T')[0] : '')
+    setEndDate(ad.endDate ? ad.endDate.split('T')[0] : '')
+    setStatusActive(ad.isActive)
+    setMediaUrl(ad.mediaUrl || '')
+    setThumbnailUrl(ad.imageUrl || '')
+    setUploadStage('success')
+  }, [])
+
+  // ─── Save Callback ─────────────────────────────────────────────────────
+
+  const handleSave = useCallback(async () => {
+    if (!bannerName.trim()) {
+      toast.error('Please enter a banner name')
+      return
+    }
+    if (!mediaUrl && !editingAd) {
+      toast.error('Please upload a banner ad image or video first')
+      return
+    }
+    setSaving(true)
+    try {
+      const isVideo = mediaFile ? mediaFile.type.startsWith('video/') : (mediaUrl ? mediaUrl.endsWith('.mp4') : false)
+      const targetFormat = isVideo ? 'mp4' : 'jpg'
+      const adData = {
+        type: 'banner',
+        position: bannerPosition,
+        title: bannerName,
+        imageUrl: thumbnailUrl || mediaUrl || '',
+        mediaUrl: mediaUrl || '',
+        mediaFormat: targetFormat,
+        linkUrl: bannerLink || null,
+        startDate: startDate ? new Date(startDate).toISOString() : null,
+        endDate: endDate ? new Date(endDate).toISOString() : null,
+        isActive: statusActive,
+        frequency: 1,
+      }
+
+      let success = false
+      if (editingAd) {
+        success = await updateAd(editingAd.id, adData)
+      } else {
+        success = await createAd(adData)
+      }
+
+      if (success) {
+        resetForm()
+      }
+    } catch (err) {
+      console.error('Error saving banner ad:', err)
+      toast.error('Failed to save banner ad')
+    } finally {
+      setSaving(false)
+    }
+  }, [bannerName, mediaUrl, mediaFile, bannerPosition, thumbnailUrl, bannerLink, startDate, endDate, statusActive, editingAd, updateAd, createAd, resetForm])
 
   // ─── Filtered Ads ──────────────────────────────────────────────────────
 
@@ -295,6 +406,21 @@ export function BannerAdsPage() {
     if (statusFilter !== 'all' && statusStr !== statusFilter) return false
     if (searchQuery && !ad.title.toLowerCase().includes(searchQuery.toLowerCase())) return false
     return true
+  }).map((ad, idx) => {
+    const isVideo = ad.mediaFormat === 'mp4' || ad.mediaFormat === 'webm' || ad.mediaFormat === 'mov'
+    const isAnimated = ad.mediaFormat === 'gif'
+    const typeLabel = isVideo ? 'Video' : (isAnimated ? 'Animated' : 'Image')
+    const ctrValue = ad.impressions > 0 ? ((ad.clicks / ad.impressions) * 100).toFixed(2) + '%' : '0.00%'
+
+    return {
+      ...ad,
+      name: ad.title,
+      type: typeLabel,
+      size: ad.imageUrl && ad.imageUrl.includes('x') ? ad.imageUrl.split('_').pop()?.split('.')[0] || '970x250' : '970x250',
+      status: ad.isActive ? 'Active' : 'Paused',
+      ctr: ctrValue,
+      gradient: thumbnailGradients[idx % thumbnailGradients.length],
+    }
   })
 
   const statusStyles: Record<string, string> = {
@@ -495,7 +621,7 @@ export function BannerAdsPage() {
                       type="file"
                       accept={getAcceptTypes()}
                       className="hidden"
-                      onChange={(e) => { if (e.target.files?.length) simulateUpload(e.target.files[0].name) }}
+                      onChange={(e) => { if (e.target.files?.length) handleFileProcess(e.target.files[0]) }}
                     />
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff1e1e]/10">
                       <CloudUpload className="h-6 w-6 text-[#ff1e1e]" />
@@ -781,12 +907,18 @@ export function BannerAdsPage() {
 
                 {/* Save button */}
                 <motion.button
+                  onClick={handleSave}
+                  disabled={saving || uploadStage === 'uploading' || uploadStage === 'processing'}
                   whileHover={{ scale: 1.02, boxShadow: '0 0 25px rgba(255,30,30,0.4)' }}
                   whileTap={{ scale: 0.98 }}
-                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff1e1e] to-[#cc181e] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_0_15px_rgba(255,30,30,0.3)] transition-all hover:from-[#ff2e2e] hover:to-[#dd282e]"
+                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff1e1e] to-[#cc181e] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_0_15px_rgba(255,30,30,0.3)] transition-all hover:from-[#ff2e2e] hover:to-[#dd282e] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <CloudUpload className="h-4 w-4" />
-                  Save Banner Ad
+                  {saving ? (
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  ) : (
+                    <CloudUpload className="h-4 w-4" />
+                  )}
+                  {saving ? 'Saving...' : editingAd ? 'Update Banner Ad' : 'Save Banner Ad'}
                 </motion.button>
               </div>
             </div>
@@ -1189,13 +1321,29 @@ export function BannerAdsPage() {
                       {/* Actions */}
                       <td className="py-2">
                         <div className="flex items-center gap-1">
-                          <button onClick={() => toggleAd(ad.id)} className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white" title={ad.isActive ? 'Pause' : 'Activate'}>
+                          <button
+                            onClick={() => handleEdit(ad)}
+                            className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white"
+                            title="Edit"
+                          >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
-                          <button className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white" title="Analytics">
-                            <BarChart3 className="h-3.5 w-3.5" />
+                          <button
+                            onClick={() => toggleAd(ad.id)}
+                            className={`rounded-md p-1.5 transition-colors ${
+                              ad.isActive
+                                ? 'text-amber-400/50 hover:bg-amber-500/10 hover:text-amber-400'
+                                : 'text-emerald-400/50 hover:bg-emerald-500/10 hover:text-emerald-400'
+                            }`}
+                            title={ad.isActive ? 'Pause' : 'Activate'}
+                          >
+                            <Zap className="h-3.5 w-3.5" />
                           </button>
-                          <button onClick={() => { if (confirm('Delete this ad?')) deleteAd(ad.id) }} className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-red-500/10 hover:text-red-400" title="Delete">
+                          <button
+                            onClick={() => { if (confirm('Delete this ad?')) deleteAd(ad.id) }}
+                            className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                            title="Delete"
+                          >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>

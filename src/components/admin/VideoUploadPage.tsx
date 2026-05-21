@@ -33,6 +33,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
+import { extractVideoMetadataAndThumbnail } from '@/lib/storage/thumbnail-helper'
+import { uploadFile } from '@/lib/storage/upload-helper'
+import { toast } from 'sonner'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -61,7 +64,7 @@ const thumbnailGradients = [
 ]
 
 const thumbnailTimecodes = [
-  '00:03', '00:08', '00:14', '00:22', '00:31',
+  'Auto-gen', '00:08', '00:14', '00:22', '00:31',
   '00:42', '00:55', '01:05', '01:18', '01:25',
 ]
 
@@ -88,6 +91,18 @@ const categoryOptions = [
   'Comedy',
   'Horror',
 ]
+
+function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
@@ -117,63 +132,109 @@ export function VideoUploadPage() {
 
   // Video player state
   const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [videoDuration, setVideoDuration] = useState(0)
+
+  // Upload/processing references
+  const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [videoUrl, setVideoUrl] = useState('')
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
+  const [localThumbnailUrl, setLocalThumbnailUrl] = useState('')
+  const [thumbnailBlob, setThumbnailBlob] = useState<Blob | File | null>(null)
+  const [previewVideoUrl, setPreviewVideoUrl] = useState('')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const thumbnailInputRef = useRef<HTMLInputElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
-  // ─── Simulated Upload ──────────────────────────────────────────────────
+  // ─── Real File Upload Process ──────────────────────────────────────────────
 
-  const simulateUpload = useCallback((fileName: string) => {
-    setFileInfo({
-      name: fileName || 'Nature Cinematic Trailer.mp4',
-      resolution: '1920 × 1080',
-      size: '2.45 GB',
-      duration: '01:28',
-    })
-    setUploadStage('uploading')
+  const handleFileProcess = useCallback(async (file: File) => {
+    if (!file) return
+    setVideoFile(file)
+    setUploadStage('idle')
     setUploadProgress(0)
     setUploadedSize('0 GB')
     setUploadSpeed('0 MB/s')
 
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+    // Set initial title from file name
+    const nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name
+    setTitle(nameWithoutExt)
 
-    let progress = 0
-    const totalSize = 5.0 // GB
+    // Set file size info
+    const sizeInGB = file.size / (1024 * 1024 * 1024)
+    const sizeStr = sizeInGB >= 0.1 ? `${sizeInGB.toFixed(2)} GB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`
 
-    progressIntervalRef.current = setInterval(() => {
-      const increment = Math.random() * 4 + 1
-      progress = Math.min(progress + increment, 100)
-      setUploadProgress(progress)
+    setFileInfo({
+      name: file.name,
+      resolution: 'Detecting...',
+      size: sizeStr,
+      duration: 'Detecting...',
+    })
 
-      const uploaded = (progress / 100) * totalSize
-      setUploadedSize(`${uploaded.toFixed(2)} GB`)
-      setUploadSpeed(`${(Math.random() * 2 + 1.5).toFixed(1)} MB/s`)
+    setUploadStage('processing') // Show "processing" for metadata extraction
 
-      const remaining = ((100 - progress) / increment) * 0.15
-      if (remaining > 60) {
-        setUploadRemaining(`${Math.ceil(remaining / 60)} mins left`)
-      } else {
-        setUploadRemaining(`${Math.ceil(remaining)} secs left`)
+    try {
+      // 1. Extract metadata and thumbnail
+      const meta = await extractVideoMetadataAndThumbnail(file)
+
+      const durationStr = formatDuration(meta.duration)
+      setDuration(durationStr)
+      setVideoDuration(meta.duration)
+      setQuality(meta.resolution)
+
+      setFileInfo({
+        name: file.name,
+        resolution: `${meta.width} × ${meta.height} (${meta.resolution})`,
+        size: sizeStr,
+        duration: durationStr,
+      })
+
+      setThumbnailBlob(meta.thumbnailBlob)
+      const localUrl = URL.createObjectURL(meta.thumbnailBlob)
+      setLocalThumbnailUrl(localUrl)
+
+      const localVideoUrl = URL.createObjectURL(file)
+      setPreviewVideoUrl(localVideoUrl)
+
+      // 2. Start actual chunked upload
+      setUploadStage('uploading')
+
+      const uploadRes = await uploadFile(file, 'video', file.name, (progress, speed, remaining) => {
+        setUploadProgress(progress)
+        setUploadSpeed(speed)
+        setUploadRemaining(remaining)
+        const uploaded = (progress / 100) * file.size
+        const uploadedGB = uploaded / (1024 * 1024 * 1024)
+        if (uploadedGB >= 0.1) {
+          setUploadedSize(`${uploadedGB.toFixed(2)} GB`)
+        } else {
+          setUploadedSize(`${(uploaded / (1024 * 1024)).toFixed(1)} MB`)
+        }
+      })
+
+      // Store uploaded video URL
+      setVideoUrl(uploadRes.url)
+
+      // 3. Now upload the thumbnail
+      let finalThumbnailUrl = ''
+      if (meta.thumbnailBlob) {
+        try {
+          const thumbRes = await uploadFile(meta.thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+          finalThumbnailUrl = thumbRes.url
+          setThumbnailUrl(thumbRes.url)
+        } catch (thumbErr) {
+          console.error('Failed to upload thumbnail:', thumbErr)
+        }
       }
 
-      if (progress >= 100) {
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
-        setUploadStage('processing')
-        setTimeout(() => {
-          setUploadStage('success')
-          setTitle('Nature Cinematic Trailer')
-          setDescription('A cinematic trailer showcasing the beauty of nature, stunning landscapes, and peaceful moments.')
-          setCategory('Travel & Nature')
-          setQuality('1080p')
-          setDuration('01:28')
-        }, 1500)
-      }
-    }, 150)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+      setUploadStage('success')
+      toast.success('Video uploaded and processed successfully!')
+    } catch (err) {
+      console.error('Upload process failed:', err)
+      setUploadStage('idle')
+      setFileInfo(null)
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
@@ -197,17 +258,17 @@ export function VideoUploadPage() {
       e.stopPropagation()
       setIsDragOver(false)
       const files = e.dataTransfer.files
-      if (files.length > 0) simulateUpload(files[0].name)
+      if (files.length > 0) handleFileProcess(files[0])
     },
-    [simulateUpload]
+    [handleFileProcess]
   )
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = e.target.files
-      if (files && files.length > 0) simulateUpload(files[0].name)
+      if (files && files.length > 0) handleFileProcess(files[0])
     },
-    [simulateUpload]
+    [handleFileProcess]
   )
 
   const handleBrowseClick = useCallback(() => {
@@ -227,7 +288,17 @@ export function VideoUploadPage() {
     setIsTrending(false)
     setIsLive(false)
     setSelectedThumbnail(0)
+    setVideoFile(null)
+    setVideoUrl('')
+    setThumbnailUrl('')
+    setLocalThumbnailUrl('')
+    setThumbnailBlob(null)
+    setPreviewVideoUrl('')
+    setCurrentTime(0)
+    setVideoDuration(0)
+    setIsPlaying(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
+    if (thumbnailInputRef.current) thumbnailInputRef.current.value = ''
   }, [])
 
   const handleClearForm = useCallback(() => {
@@ -241,6 +312,46 @@ export function VideoUploadPage() {
     setIsLive(false)
   }, [])
 
+  const handleManualThumbnailSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      const file = files[0]
+      setThumbnailBlob(file)
+      const localUrl = URL.createObjectURL(file)
+      setLocalThumbnailUrl(localUrl)
+      setSelectedThumbnail(0) // Select the first slot where custom preview is rendered
+    }
+  }, [])
+
+  // Video Player custom controls
+  const handlePlayPause = useCallback(() => {
+    if (!videoRef.current) return
+    if (isPlaying) {
+      videoRef.current.pause()
+    } else {
+      videoRef.current.play()
+    }
+  }, [isPlaying])
+
+  const handleTimeUpdate = useCallback(() => {
+    if (!videoRef.current) return
+    setCurrentTime(videoRef.current.currentTime)
+  }, [])
+
+  const handleVideoLoaded = useCallback(() => {
+    if (!videoRef.current) return
+    setVideoDuration(videoRef.current.duration)
+  }, [])
+
+  const handleProgressBarClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!videoRef.current || videoDuration <= 0) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const percentage = clickX / rect.width
+    videoRef.current.currentTime = percentage * videoDuration
+    setCurrentTime(percentage * videoDuration)
+  }, [videoDuration])
+
   // ─── Create video in database via API ──────────────────────────────────────
   const [isPublishing, setIsPublishing] = useState(false)
   const [publishSuccess, setPublishSuccess] = useState(false)
@@ -249,16 +360,29 @@ export function VideoUploadPage() {
     if (!title.trim() || !category) return
     setIsPublishing(true)
     try {
+      let finalThumbUrl = thumbnailUrl
+
+      // If custom/modified thumbnail, upload it now
+      if (thumbnailBlob && !thumbnailUrl) {
+        toast.info('Uploading thumbnail...')
+        const thumbRes = await uploadFile(thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+        finalThumbUrl = thumbRes.url
+        setThumbnailUrl(thumbRes.url)
+      }
+
       const res = await fetch('/api/videos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || `Watch ${title.trim()} on Xtube.`,
-          thumbnail: `https://picsum.photos/seed/${Date.now()}/640/360`,
-          videoUrl: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+          thumbnail: finalThumbUrl || `https://picsum.photos/seed/${Date.now()}/640/360`,
+          videoUrl: videoUrl || 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
           category,
           duration: duration || '0:00',
+          isFeatured,
+          isTrending,
+          isLive,
           isHd: quality === '1080p' || quality === '2k' || quality === '4k',
           isPublished: true,
           resolution: quality,
@@ -266,17 +390,21 @@ export function VideoUploadPage() {
       })
       if (res.ok) {
         setPublishSuccess(true)
+        toast.success('Video published successfully!')
         setTimeout(() => {
           handleResetUpload()
           setPublishSuccess(false)
         }, 2000)
+      } else {
+        toast.error('Failed to publish video')
       }
     } catch (err) {
       console.error('Error creating video:', err)
+      toast.error('Error publishing video')
     } finally {
       setIsPublishing(false)
     }
-  }, [title, description, category, quality, duration, handleResetUpload])
+  }, [title, description, category, quality, duration, videoUrl, thumbnailUrl, thumbnailBlob, isFeatured, isTrending, isLive, handleResetUpload])
 
   // ─── Render ────────────────────────────────────────────────────────────
 
@@ -405,39 +533,61 @@ export function VideoUploadPage() {
                   className="overflow-hidden rounded-xl border border-white/5 bg-[#111111]/80"
                 >
                   <div className="relative aspect-video bg-gradient-to-br from-[#1a2a4a] via-[#0d1b2a] to-[#0a1628]">
+                    {previewVideoUrl && (
+                      <video
+                        ref={videoRef}
+                        src={previewVideoUrl}
+                        className="absolute inset-0 h-full w-full object-cover"
+                        onPlay={() => setIsPlaying(true)}
+                        onPause={() => setIsPlaying(false)}
+                        onTimeUpdate={handleTimeUpdate}
+                        onLoadedMetadata={handleVideoLoaded}
+                        onClick={handlePlayPause}
+                      />
+                    )}
                     {/* Video scene gradient */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
 
                     {/* Play/Pause overlay */}
-                    <button
-                      onClick={() => setIsPlaying(!isPlaying)}
-                      className="absolute inset-0 flex items-center justify-center transition-opacity"
-                    >
-                      <motion.div
-                        whileHover={{ scale: 1.1 }}
-                        whileTap={{ scale: 0.95 }}
-                        className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 transition-colors hover:bg-white/20"
+                    {!isPlaying && (
+                      <button
+                        onClick={handlePlayPause}
+                        className="absolute inset-0 flex items-center justify-center transition-opacity"
                       >
-                        {isPlaying ? (
-                          <Pause className="h-6 w-6 text-white" fill="white" />
-                        ) : (
+                        <motion.div
+                          whileHover={{ scale: 1.1 }}
+                          whileTap={{ scale: 0.95 }}
+                          className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 transition-colors hover:bg-white/20"
+                        >
                           <Play className="h-6 w-6 text-white ml-0.5" fill="white" />
-                        )}
-                      </motion.div>
-                    </button>
+                        </motion.div>
+                      </button>
+                    )}
 
                     {/* Bottom controls */}
                     <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-3 pt-8">
                       {/* Progress bar */}
-                      <div className="group/progress relative mb-2 h-1 cursor-pointer rounded-full bg-white/20">
-                        <div className="absolute left-0 top-0 h-full w-[30%] rounded-full bg-xtube-red" />
-                        <div className="absolute left-[30%] top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border-2 border-xtube-red bg-white opacity-0 transition-opacity group-hover/progress:opacity-100" />
+                      <div
+                        onClick={handleProgressBarClick}
+                        className="group/progress relative mb-2 h-1 cursor-pointer rounded-full bg-white/20"
+                      >
+                        <div
+                          className="absolute left-0 top-0 h-full bg-xtube-red"
+                          style={{ width: `${videoDuration > 0 ? (currentTime / videoDuration) * 100 : 0}%` }}
+                        />
+                        <div
+                          className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border-2 border-xtube-red bg-white opacity-0 transition-opacity group-hover/progress:opacity-100"
+                          style={{
+                            left: `${videoDuration > 0 ? (currentTime / videoDuration) * 100 : 0}%`,
+                            transform: 'translate(-50%, -50%)',
+                          }}
+                        />
                       </div>
 
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <button
-                            onClick={() => setIsPlaying(!isPlaying)}
+                            onClick={handlePlayPause}
                             className="text-white/70 transition-colors hover:text-white"
                           >
                             {isPlaying ? (
@@ -449,7 +599,9 @@ export function VideoUploadPage() {
                           <button className="text-white/70 transition-colors hover:text-white">
                             <Volume2 className="h-4 w-4" />
                           </button>
-                          <span className="text-xs text-white/50">0:00 / 1:28</span>
+                          <span className="text-xs text-white/50">
+                            {formatTime(currentTime)} / {formatTime(videoDuration)}
+                          </span>
                         </div>
                         <div className="flex items-center gap-3">
                           <button className="text-white/70 transition-colors hover:text-white">
@@ -667,9 +819,19 @@ export function VideoUploadPage() {
                       <ImageIcon className="h-4 w-4 text-white/40" />
                       <span className="text-sm font-semibold text-white">Thumbnail</span>
                     </div>
-                    <button className="text-sm font-medium text-xtube-red transition-colors hover:text-xtube-red-hover">
+                    <button
+                      onClick={() => thumbnailInputRef.current?.click()}
+                      className="text-sm font-medium text-xtube-red transition-colors hover:text-xtube-red-hover"
+                    >
                       Upload Manually
                     </button>
+                    <input
+                      ref={thumbnailInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleManualThumbnailSelect}
+                    />
                   </div>
 
                   {/* Thumbnails Grid */}
@@ -686,9 +848,17 @@ export function VideoUploadPage() {
                             : 'border-transparent hover:border-white/20'
                         }`}
                       >
-                        <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
+                        {i === 0 && localThumbnailUrl ? (
+                          <img
+                            src={localThumbnailUrl}
+                            alt="Generated or manual thumbnail preview"
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
+                        )}
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <Film className="h-3 w-3 text-white/15" />
+                          {!(i === 0 && localThumbnailUrl) && <Film className="h-3 w-3 text-white/15" />}
                         </div>
                         {/* Timecode */}
                         <div className="absolute bottom-0.5 right-0.5 rounded bg-black/70 px-1 py-0.5 text-[7px] font-semibold text-white">

@@ -139,13 +139,6 @@ export default function XtubeHome() {
   const [currentVideo, setCurrentVideo] = useState<VideoData | null>(null)
   const [videoComments, setVideoComments] = useState<CommentData[]>([])
 
-  // ─── Supabase Realtime Subscriptions (supplements API data with live updates) ──
-  const { data: realtimeVideos } = useRealtimeSubscription<VideoData>('Video', { filter: 'isPublished=eq.true' })
-  const { data: realtimeCategories } = useRealtimeSubscription<CategoryData>('Category')
-  const { data: realtimeFooterAds } = useRealtimeSubscription<FooterAdData>('FooterAd', { filter: 'isActive=eq.true' })
-  const { data: realtimeHeroAds } = useRealtimeSubscription<HeroAdData>('HeroAd', { filter: 'isActive=eq.true' })
-  const { data: realtimeAds } = useRealtimeSubscription<AdData>('Ad', { filter: 'isActive=eq.true' })
-
   // ─── Initial API data fetching (populates data on first load) ──────────────
   const [apiVideos, setApiVideos] = useState<VideoData[]>([])
   const [apiCategories, setApiCategories] = useState<CategoryData[]>([])
@@ -153,6 +146,14 @@ export default function XtubeHome() {
   const [apiHeroAds, setApiHeroAds] = useState<HeroAdData[]>([])
   const [apiAds, setApiAds] = useState<AdData[]>([])
   const [apiLoaded, setApiLoaded] = useState(false)
+
+  // ─── Supabase Realtime Subscriptions (supplements API data with live updates) ──
+  const { data: realtimeVideos } = useRealtimeSubscription<VideoData>('Video', { filter: 'isPublished=eq.true', initialData: apiVideos })
+  const { data: realtimeCategories } = useRealtimeSubscription<CategoryData>('Category', { initialData: apiCategories })
+  const { data: realtimeFooterAds } = useRealtimeSubscription<FooterAdData>('FooterAd', { filter: 'isActive=eq.true', initialData: apiFooterAds })
+  const { data: realtimeHeroAds } = useRealtimeSubscription<HeroAdData>('HeroAd', { filter: 'isActive=eq.true', initialData: apiHeroAds })
+  const { data: realtimeAds } = useRealtimeSubscription<AdData>('Ad', { filter: 'isActive=eq.true', initialData: apiAds })
+
 
   useEffect(() => {
     let cancelled = false
@@ -205,12 +206,12 @@ export default function XtubeHome() {
     return true
   }
 
-  // Merge: prefer realtime data if available, otherwise fall back to API data
-  const videos = (realtimeVideos.length > 0 ? realtimeVideos : apiVideos) as VideoData[]
-  const categories = (realtimeCategories.length > 0 ? realtimeCategories : apiCategories) as CategoryData[]
-  const ads = (realtimeAds.length > 0 ? realtimeAds : apiAds) as AdData[]
-  const footerAds = ((realtimeFooterAds.length > 0 ? realtimeFooterAds : apiFooterAds) as FooterAdData[]).filter(isWithinSchedule)
-  const heroAds = ((realtimeHeroAds.length > 0 ? realtimeHeroAds : apiHeroAds) as HeroAdData[]).filter(isWithinSchedule)
+  // Merge: hook manages the unified merged list, so we can read directly from realtime hook results
+  const videos = realtimeVideos as VideoData[]
+  const categories = realtimeCategories as CategoryData[]
+  const ads = realtimeAds as AdData[]
+  const footerAds = (realtimeFooterAds as FooterAdData[]).filter(isWithinSchedule)
+  const heroAds = (realtimeHeroAds as HeroAdData[]).filter(isWithinSchedule)
 
   // Progressive loading: show content as soon as ANY data arrives
   // Max skeleton time: 800ms then show whatever we have

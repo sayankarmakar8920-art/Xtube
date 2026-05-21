@@ -62,7 +62,10 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts'
-import { useAdsManager } from '@/hooks/useAdsManager'
+import { useAdsManager, type AdItem } from '@/hooks/useAdsManager'
+import { uploadFile } from '@/lib/storage/upload-helper'
+import { extractVideoMetadataAndThumbnail } from '@/lib/storage/thumbnail-helper'
+import { toast } from 'sonner'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -174,7 +177,7 @@ function StatCard({
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export function PopupAdsPage() {
-  const { ads, loading, createAd, deleteAd, toggleAd } = useAdsManager({ type: 'popup' })
+  const { ads, loading, createAd, updateAd, deleteAd, toggleAd } = useAdsManager({ type: 'popup' })
 
   // Upload state
   const [uploadStage, setUploadStage] = useState<UploadStage>('idle')
@@ -207,43 +210,69 @@ export function PopupAdsPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const createSectionRef = useRef<HTMLDivElement>(null)
-  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // ─── Simulated Upload ──────────────────────────────────────────────────
+  // Real Upload states
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
+  const [mediaUrl, setMediaUrl] = useState('')
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editingAd, setEditingAd] = useState<AdItem | null>(null)
 
-  const simulateUpload = useCallback((fileName: string) => {
-    setUploadStage('uploading')
-    setUploadProgress(0)
-    setUploadedSize('0 GB')
+  const handleFileProcess = useCallback(async (file: File) => {
+    if (!file) return
+    setMediaFile(file)
+    const isVideo = file.type.startsWith('video/')
+    setUploadStage('processing')
 
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+    try {
+      let resolvedThumbnailUrl = ''
+      let videoMeta = null
 
-    let progress = 0
-    const totalSize = 5.0
-
-    progressIntervalRef.current = setInterval(() => {
-      const increment = Math.random() * 4 + 1
-      progress = Math.min(progress + increment, 100)
-      setUploadProgress(progress)
-
-      const uploaded = (progress / 100) * totalSize
-      setUploadedSize(`${uploaded.toFixed(2)} GB`)
-      setUploadSpeed(`${(Math.random() * 2 + 1.5).toFixed(1)} MB/s`)
-
-      const remaining = ((100 - progress) / increment) * 0.15
-      setUploadRemaining(remaining > 60 ? `${Math.ceil(remaining / 60)} mins left` : `${Math.ceil(remaining)} secs left`)
-
-      if (progress >= 100) {
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
-        setUploadStage('processing')
-        setTimeout(() => setUploadStage('success'), 1500)
+      if (isVideo) {
+        try {
+          videoMeta = await extractVideoMetadataAndThumbnail(file)
+        } catch (err) {
+          console.error('Failed to extract video thumbnail:', err)
+        }
       }
-    }, 150)
-  }, [])
 
-  useEffect(() => {
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+      setUploadStage('uploading')
+
+      const category = 'ad'
+      const uploadRes = await uploadFile(file, category, file.name, (progress, speed, remaining) => {
+        setUploadProgress(progress)
+        setUploadSpeed(speed || '0 MB/s')
+        setUploadRemaining(remaining || '')
+        const uploaded = (progress / 100) * file.size
+        const uploadedGB = uploaded / (1024 * 1024 * 1024)
+        if (uploadedGB >= 0.1) {
+          setUploadedSize(`${uploadedGB.toFixed(2)} GB`)
+        } else {
+          setUploadedSize(`${(uploaded / (1024 * 1024)).toFixed(1)} MB`)
+        }
+      })
+
+      setMediaUrl(uploadRes.url)
+
+      if (isVideo && videoMeta?.thumbnailBlob) {
+        try {
+          const thumbRes = await uploadFile(videoMeta.thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+          resolvedThumbnailUrl = thumbRes.url
+          setThumbnailUrl(thumbRes.url)
+        } catch (thumbErr) {
+          console.error('Failed to upload video ad thumbnail:', thumbErr)
+        }
+      } else if (!isVideo) {
+        setThumbnailUrl(uploadRes.url)
+      }
+
+      setUploadStage('success')
+      toast.success('Ad file uploaded successfully!')
+    } catch (err) {
+      console.error('Ad upload failed:', err)
+      setUploadStage('idle')
+      setMediaFile(null)
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
@@ -255,20 +284,99 @@ export function PopupAdsPage() {
     e.preventDefault()
     setIsDragOver(false)
     const files = e.dataTransfer.files
-    if (files.length > 0) simulateUpload(files[0].name)
-  }, [simulateUpload])
+    if (files.length > 0) handleFileProcess(files[0])
+  }, [handleFileProcess])
 
   const handleResetUpload = useCallback(() => {
     setUploadStage('idle')
     setUploadProgress(0)
     setSelectedThumbnail(0)
+    setMediaFile(null)
+    setMediaUrl('')
+    setThumbnailUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
+
+  // ─── Reset Form ────────────────────────────────────────────────────────
+
+  const resetForm = useCallback(() => {
+    setNewAdTitle('')
+    setTriggerType('time-delay')
+    setTimeDelay('5')
+    setDisplayFrequency('once-per-session')
+    setPopupSize('medium')
+    setPopupPosition('center')
+    setCloseButton(true)
+    setDeviceDesktop(true)
+    setDeviceTablet(true)
+    setDeviceMobile(false)
+    setEditingAd(null)
+    handleResetUpload()
+  }, [handleResetUpload])
+
+  // ─── Edit Callback ─────────────────────────────────────────────────────
+
+  const handleEdit = useCallback((ad: AdItem) => {
+    setEditingAd(ad)
+    setNewAdTitle(ad.title)
+    setPopupPosition(ad.position)
+    setAdTab(ad.mediaFormat === 'mp4' ? 'video' : ad.mediaFormat === 'text' ? 'text' : 'image')
+    setDisplayFrequency(ad.frequency === 1 ? 'once-per-session' : ad.frequency === 2 ? 'once-per-page' : ad.frequency === 3 ? 'every-visit' : 'daily')
+    setTimeDelay(String(ad.skipAfter || 5))
+    setMediaUrl(ad.mediaUrl || '')
+    setThumbnailUrl(ad.imageUrl || '')
+    setUploadStage('success')
+  }, [])
+
+  // ─── Save Callback ─────────────────────────────────────────────────────
+
+  const handleSave = useCallback(async () => {
+    if (!newAdTitle.trim()) {
+      toast.error('Please enter an ad title')
+      return
+    }
+    if (!mediaUrl && adTab !== 'text' && !editingAd) {
+      toast.error('Please upload an ad image or video first')
+      return
+    }
+    setSaving(true)
+    try {
+      const isVideo = mediaFile ? mediaFile.type.startsWith('video/') : (mediaUrl ? mediaUrl.endsWith('.mp4') : false)
+      const targetFormat = adTab === 'text' ? 'text' : (isVideo ? 'mp4' : 'jpg')
+      const adData = {
+        type: 'popup',
+        position: popupPosition,
+        title: newAdTitle.trim(),
+        imageUrl: thumbnailUrl || mediaUrl || '',
+        mediaUrl: mediaUrl || '',
+        mediaFormat: targetFormat,
+        frequency: displayFrequency === 'once-per-session' ? 1 : displayFrequency === 'once-per-page' ? 2 : displayFrequency === 'every-visit' ? 3 : 4,
+        skipAfter: parseInt(timeDelay) || 5,
+        isActive: editingAd ? editingAd.isActive : true,
+      }
+
+      let success = false
+      if (editingAd) {
+        success = await updateAd(editingAd.id, adData)
+      } else {
+        success = await createAd(adData)
+      }
+
+      if (success) {
+        resetForm()
+      }
+    } catch (err) {
+      console.error('Error saving popup ad:', err)
+      toast.error('Failed to save popup ad')
+    } finally {
+      setSaving(false)
+    }
+  }, [newAdTitle, mediaUrl, mediaFile, adTab, popupPosition, thumbnailUrl, displayFrequency, timeDelay, editingAd, updateAd, createAd, resetForm])
 
   // ─── Computed Data from Real Ads ──────────────────────────────────────
 
   const displayAds = useMemo(() => ads.map((ad) => ({
-    id: ad.id,
+    ...ad,
     name: ad.title,
     type: (ad.mediaFormat === 'mp4' ? 'Video' : ad.mediaFormat === 'text' ? 'Text' : 'Image') as 'Image' | 'Video' | 'Text',
     trigger: ad.skipAfter ? `Time Delay (${ad.skipAfter}s)` : 'Time Delay (5s)',
@@ -506,7 +614,7 @@ export function PopupAdsPage() {
                       type="file"
                       accept={getAcceptTypes()}
                       className="hidden"
-                      onChange={(e) => { if (e.target.files?.length) simulateUpload(e.target.files[0].name) }}
+                      onChange={(e) => { if (e.target.files?.length) handleFileProcess(e.target.files[0]) }}
                     />
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff1e1e]/10">
                       <CloudUpload className="h-6 w-6 text-[#ff1e1e]" />
@@ -597,8 +705,12 @@ export function PopupAdsPage() {
                     <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
                       <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-white">Popup_Banner_Ad.png</p>
-                        <p className="text-[10px] text-white/30">1.85MB • 1920×1080 • PNG</p>
+                        <p className="truncate text-xs font-medium text-white">
+                          {mediaFile ? mediaFile.name : editingAd ? editingAd.title : 'Popup_Ad.png'}
+                        </p>
+                        <p className="text-[10px] text-white/30">
+                          {mediaFile ? `${(mediaFile.size / (1024 * 1024)).toFixed(2)}MB` : '2.25MB'} • {mediaFile ? (mediaFile.type.startsWith('video/') ? 'Video' : 'Image') : editingAd ? editingAd.mediaFormat : 'PNG'}
+                        </p>
                       </div>
                       <button onClick={handleResetUpload} className="text-xs text-[#ff1e1e] hover:text-[#ff3e3e]">Change</button>
                     </div>
@@ -775,29 +887,14 @@ export function PopupAdsPage() {
 
                 {/* Save button */}
                 <motion.button
-                  whileHover={{ scale: 1.02, boxShadow: '0 0 25px rgba(255,30,30,0.4)' }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={async () => {
-                    if (!newAdTitle.trim()) return
-                    const success = await createAd({
-                      type: 'popup',
-                      title: newAdTitle.trim(),
-                      position: popupPosition,
-                      imageUrl: '',
-                      mediaFormat: adTab === 'video' ? 'mp4' : adTab === 'text' ? 'text' : 'image',
-                      frequency: displayFrequency === 'once-per-session' ? 1 : displayFrequency === 'once-per-page' ? 2 : displayFrequency === 'every-visit' ? 3 : 4,
-                      skipAfter: parseInt(timeDelay) || 5,
-                      isActive: true,
-                    })
-                    if (success) {
-                      setNewAdTitle('')
-                      handleResetUpload()
-                    }
-                  }}
-                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff1e1e] to-[#cc181e] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_0_15px_rgba(255,30,30,0.3)] transition-all hover:from-[#ff2e2e] hover:to-[#dd282e]"
+                  whileHover={saving ? {} : { scale: 1.02, boxShadow: '0 0 25px rgba(255,30,30,0.4)' }}
+                  whileTap={saving ? {} : { scale: 0.98 }}
+                  disabled={saving}
+                  onClick={handleSave}
+                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff1e1e] to-[#cc181e] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_0_15px_rgba(255,30,30,0.3)] transition-all hover:from-[#ff2e2e] hover:to-[#dd282e] disabled:opacity-50"
                 >
                   <CloudUpload className="h-4 w-4" />
-                  Save Popup Ad
+                  {saving ? 'Saving...' : editingAd ? 'Update Popup Ad' : 'Save Popup Ad'}
                 </motion.button>
               </div>
             </div>
@@ -1195,11 +1292,11 @@ export function PopupAdsPage() {
                         {/* Actions */}
                         <td className="py-2">
                           <div className="flex items-center gap-1">
-                            <button onClick={() => toggleAd(ad.id)} className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white" title="Toggle">
+                            <button onClick={() => handleEdit(ad)} className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white" title="Edit">
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
-                            <button className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-white/10 hover:text-white" title="Analytics">
-                              <BarChart3 className="h-3.5 w-3.5" />
+                            <button onClick={() => toggleAd(ad.id)} className={`rounded-md p-1.5 transition-colors ${ad.isActive ? 'text-amber-400/50 hover:bg-amber-500/10 hover:text-amber-400' : 'text-emerald-400/50 hover:bg-emerald-500/10 hover:text-emerald-400'}`} title={ad.isActive ? 'Pause' : 'Activate'}>
+                              <Zap className="h-3.5 w-3.5" />
                             </button>
                             <button onClick={() => { if (confirm('Delete this ad?')) deleteAd(ad.id) }} className="rounded-md p-1.5 text-white/30 transition-colors hover:bg-red-500/10 hover:text-red-400" title="Delete">
                               <Trash2 className="h-3.5 w-3.5" />

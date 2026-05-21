@@ -47,6 +47,9 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts'
+import { uploadFile } from '@/lib/storage/upload-helper'
+import { extractVideoMetadataAndThumbnail } from '@/lib/storage/thumbnail-helper'
+import { toast } from 'sonner'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -166,6 +169,11 @@ export function HeroAdsPage() {
   const [isDragOver, setIsDragOver] = useState(false)
   const [selectedThumbnail, setSelectedThumbnail] = useState(0)
 
+  // Real Upload states
+  const [mediaFile, setMediaFile] = useState<File | null>(null)
+  const [mediaUrl, setMediaUrl] = useState('')
+  const [thumbnailUrl, setThumbnailUrl] = useState('')
+
   // Form state
   const [adTitle, setAdTitle] = useState('')
   const [adDescription, setAdDescription] = useState('')
@@ -193,7 +201,6 @@ export function HeroAdsPage() {
   const [deletingAdId, setDeletingAdId] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ─── Computed KPI Values ───────────────────────────────────────────────
 
@@ -217,41 +224,72 @@ export function HeroAdsPage() {
 
   const topAds = [...heroAds].sort((a, b) => b.ctr - a.ctr).slice(0, 5)
 
-  // ─── Simulated Upload ──────────────────────────────────────────────────
+  // ─── Real File Upload Process ──────────────────────────────────────────────
 
-  const simulateUpload = useCallback((fileName: string) => {
-    setUploadStage('uploading')
+  const handleFileProcess = useCallback(async (file: File) => {
+    if (!file) return
+    setMediaFile(file)
+    setUploadStage('idle')
     setUploadProgress(0)
     setUploadedSize('0 GB')
+    setUploadSpeed('0 MB/s')
 
-    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+    // Determine type
+    const isVideo = file.type.startsWith('video/')
+    const type = isVideo ? 'video' : 'image'
+    setAdType(type)
 
-    let progress = 0
-    const totalSize = 5.0
+    setUploadStage('processing')
 
-    progressIntervalRef.current = setInterval(() => {
-      const increment = Math.random() * 4 + 1
-      progress = Math.min(progress + increment, 100)
-      setUploadProgress(progress)
+    try {
+      let resolvedThumbnailUrl = ''
+      let videoMeta = null
 
-      const uploaded = (progress / 100) * totalSize
-      setUploadedSize(`${uploaded.toFixed(2)} GB`)
-      setUploadSpeed(`${(Math.random() * 2 + 1.5).toFixed(1)} MB/s`)
-
-      const remaining = ((100 - progress) / increment) * 0.15
-      setUploadRemaining(remaining > 60 ? `${Math.ceil(remaining / 60)} mins left` : `${Math.ceil(remaining)} secs left`)
-
-      if (progress >= 100) {
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
-        setUploadStage('processing')
-        setTimeout(() => setUploadStage('success'), 1500)
+      if (isVideo) {
+        try {
+          videoMeta = await extractVideoMetadataAndThumbnail(file)
+        } catch (err) {
+          console.error('Failed to extract video thumbnail:', err)
+        }
       }
-    }, 150)
-  }, [])
 
-  useEffect(() => {
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current)
+      setUploadStage('uploading')
+
+      const category = 'ad'
+      const uploadRes = await uploadFile(file, category, file.name, (progress, speed, remaining) => {
+        setUploadProgress(progress)
+        setUploadSpeed(speed)
+        setUploadRemaining(remaining)
+        const uploaded = (progress / 100) * file.size
+        const uploadedGB = uploaded / (1024 * 1024 * 1024)
+        if (uploadedGB >= 0.1) {
+          setUploadedSize(`${uploadedGB.toFixed(2)} GB`)
+        } else {
+          setUploadedSize(`${(uploaded / (1024 * 1024)).toFixed(1)} MB`)
+        }
+      })
+
+      setMediaUrl(uploadRes.url)
+
+      if (isVideo && videoMeta?.thumbnailBlob) {
+        try {
+          const thumbRes = await uploadFile(videoMeta.thumbnailBlob, 'thumbnail', 'thumbnail.jpg')
+          resolvedThumbnailUrl = thumbRes.url
+          setThumbnailUrl(thumbRes.url)
+        } catch (thumbErr) {
+          console.error('Failed to upload video ad thumbnail:', thumbErr)
+        }
+      } else if (!isVideo) {
+        setThumbnailUrl(uploadRes.url)
+      }
+
+      setUploadStage('success')
+      toast.success('Ad file uploaded successfully!')
+    } catch (err) {
+      console.error('Ad upload failed:', err)
+      setUploadStage('idle')
+      setMediaFile(null)
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }, [])
 
@@ -263,13 +301,16 @@ export function HeroAdsPage() {
     e.preventDefault()
     setIsDragOver(false)
     const files = e.dataTransfer.files
-    if (files.length > 0) simulateUpload(files[0].name)
-  }, [simulateUpload])
+    if (files.length > 0) handleFileProcess(files[0])
+  }, [handleFileProcess])
 
   const handleResetUpload = useCallback(() => {
     setUploadStage('idle')
     setUploadProgress(0)
     setSelectedThumbnail(0)
+    setMediaFile(null)
+    setMediaUrl('')
+    setThumbnailUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
@@ -277,6 +318,10 @@ export function HeroAdsPage() {
 
   const handleSave = useCallback(async () => {
     if (!adTitle.trim()) return
+    if (!mediaUrl && !editingAd) {
+      toast.error('Please upload an ad media file first')
+      return
+    }
     setSaving(true)
     try {
       if (editingAd) {
@@ -289,6 +334,8 @@ export function HeroAdsPage() {
             title: adTitle,
             description: adDescription || null,
             category: adCategory || null,
+            mediaUrl: mediaUrl || editingAd.mediaUrl,
+            thumbnailUrl: thumbnailUrl || editingAd.thumbnailUrl,
             adType,
             isActive: statusActive,
             displayOrder,
@@ -307,8 +354,8 @@ export function HeroAdsPage() {
           title: adTitle,
           description: adDescription || null,
           category: adCategory || null,
-          mediaUrl: `https://cdn.xtube.com/hero/${Date.now()}.${adType === 'video' ? 'mp4' : 'jpg'}`,
-          thumbnailUrl: `https://cdn.xtube.com/hero/thumbs/${Date.now()}.jpg`,
+          mediaUrl,
+          thumbnailUrl,
           adType,
           mediaFormat: adType === 'video' ? 'mp4' : 'jpg',
           isActive: statusActive,
@@ -324,7 +371,7 @@ export function HeroAdsPage() {
     } finally {
       setSaving(false)
     }
-  }, [adTitle, adDescription, adCategory, adType, statusActive, displayOrder, startDate, endDate, editingAd, createHeroAd, refetchHeroAds, handleResetUpload])
+  }, [adTitle, adDescription, adCategory, adType, statusActive, displayOrder, startDate, endDate, editingAd, mediaUrl, thumbnailUrl, createHeroAd, refetchHeroAds, handleResetUpload, resetForm])
 
   // ─── Delete Hero Ad ────────────────────────────────────────────────────
 
@@ -359,6 +406,8 @@ export function HeroAdsPage() {
     setEndDate(ad.endDate ? ad.endDate.split('T')[0] : '')
     setDisplayOrder(ad.displayOrder)
     setStatusActive(ad.isActive)
+    setMediaUrl(ad.mediaUrl)
+    setThumbnailUrl(ad.thumbnailUrl || '')
     setUploadStage('success')
   }, [])
 
@@ -377,8 +426,12 @@ export function HeroAdsPage() {
     setUploadStage('idle')
     setUploadProgress(0)
     setSelectedThumbnail(0)
+    setMediaFile(null)
+    setMediaUrl('')
+    setThumbnailUrl('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
+
 
   // ─── Filtered & Paginated Ads ──────────────────────────────────────────
 
@@ -536,7 +589,7 @@ export function HeroAdsPage() {
                       type="file"
                       accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,video/mp4,video/webm"
                       className="hidden"
-                      onChange={(e) => { if (e.target.files?.length) simulateUpload(e.target.files[0].name) }}
+                      onChange={(e) => { if (e.target.files?.length) handleFileProcess(e.target.files[0]) }}
                     />
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff1e1e]/10">
                       <CloudUpload className="h-6 w-6 text-[#ff1e1e]" />

@@ -191,6 +191,7 @@ function generatePresignedUrl(
   key: string,
   method: string,
   expiresInSeconds: number,
+  additionalQueryParams?: Record<string, string>,
   region = 'auto',
   service = 's3'
 ): string {
@@ -212,6 +213,7 @@ function generatePresignedUrl(
     'X-Amz-Date': dateStamp,
     'X-Amz-Expires': expires,
     'X-Amz-SignedHeaders': 'host',
+    ...additionalQueryParams,
   }
 
   const sortedQuery = Object.keys(queryParams)
@@ -246,7 +248,7 @@ function generatePresignedUrl(
 
   const signature = hmacSha256Hex(kSigning, stringToSign)
 
-  return `${R2_BASE_URL}${path}?${sortedQuery}&X-Amz-Signature=${signature}`
+  return `https://${host}${path}?${sortedQuery}&X-Amz-Signature=${signature}`
 }
 
 // ─── Crypto Helpers ──────────────────────────────────────────────────────────
@@ -410,8 +412,10 @@ async function initMultipartUploadR2(
   // Generate presigned URLs for each part
   const parts = Array.from({ length: partCount }, (_, i) => ({
     partNumber: i + 1,
-    uploadUrl: generatePresignedUrl(key, 'PUT', 3600) +
-      `&partNumber=${i + 1}&uploadId=${encodeURIComponent(uploadId)}`,
+    uploadUrl: generatePresignedUrl(key, 'PUT', 3600, {
+      partNumber: (i + 1).toString(),
+      uploadId,
+    }),
   }))
 
   // Track session in memory

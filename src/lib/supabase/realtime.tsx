@@ -60,11 +60,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
 // ── Types ────────────────────────────────────────────────────────
 
-interface RealtimeOptions {
+interface RealtimeOptions<T = any> {
   filter?: string
   schema?: string
   /** Polling interval (ms) when realtime fails. Default: 5000 */
   pollInterval?: number
+  initialData?: T[]
 }
 
 interface UseRealtimeResult<T> {
@@ -77,14 +78,21 @@ interface UseRealtimeResult<T> {
 
 export function useRealtimeSubscription<T extends Record<string, unknown> = Record<string, unknown>>(
   table: string,
-  options: RealtimeOptions = {}
+  options: RealtimeOptions<T> = {}
 ): UseRealtimeResult<T> {
-  const { filter, schema = 'public' } = options
+  const { filter, schema = 'public', initialData } = options
   const client = useSupabase()
 
-  const [data, setData] = useState<T[]>([])
+  const [data, setData] = useState<T[]>(initialData || [])
   const [isLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Keep state in sync when initialData changes (e.g. after API load completes)
+  useEffect(() => {
+    if (initialData) {
+      setData(initialData)
+    }
+  }, [initialData])
 
   // Throttle state updates to max once per 200ms
   const lastEmit = useRef(0)
@@ -125,13 +133,24 @@ export function useRealtimeSubscription<T extends Record<string, unknown> = Reco
             setData((prev) => {
               const next = [...prev]
               if (payload.eventType === 'INSERT') {
-                next.push(payload.new)
+                const exists = next.some((r) => (r as Record<string, unknown>).id === (payload.new as Record<string, unknown>).id)
+                if (!exists) {
+                  next.unshift(payload.new) // Put newest first
+                }
               } else if (payload.eventType === 'UPDATE') {
-                const idx = next.findIndex((r) => (r as Record<string, unknown>).id === (payload.old as Record<string, unknown>).id)
-                if (idx !== -1) next[idx] = payload.new
+                const oldId = (payload.old as Record<string, unknown>)?.id || (payload.new as Record<string, unknown>)?.id
+                const idx = next.findIndex((r) => (r as Record<string, unknown>).id === oldId)
+                if (idx !== -1) {
+                  next[idx] = payload.new
+                } else {
+                  next.unshift(payload.new)
+                }
               } else if (payload.eventType === 'DELETE') {
-                const delIdx = next.findIndex((r) => (r as Record<string, unknown>).id === (payload.old as Record<string, unknown>).id)
-                if (delIdx !== -1) next.splice(delIdx, 1)
+                const oldId = (payload.old as Record<string, unknown>)?.id
+                if (oldId) {
+                  const delIdx = next.findIndex((r) => (r as Record<string, unknown>).id === oldId)
+                  if (delIdx !== -1) next.splice(delIdx, 1)
+                }
               }
               throttledSet(next)
               return next

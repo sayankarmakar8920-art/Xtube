@@ -1,6 +1,6 @@
 #!/bin/bash
-export DATABASE_URL="postgresql://postgres.saitqrdjefqivaoeouhx:sayankarmakar159%40gmail.com@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
-export DIRECT_URL="postgresql://postgres.saitqrdjefqivaoeouhx:sayankarmakar159%40gmail.com@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres"
+export DATABASE_URL="postgresql://postgres.vdbrdgheycebtgxavpst:sayankarmakar159%40gmail.com@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres?pgbouncer=true"
+export DIRECT_URL="postgresql://postgres.vdbrdgheycebtgxavpst:sayankarmakar159%40gmail.com@aws-1-ap-southeast-2.pooler.supabase.com:5432/postgres"
 export NODE_OPTIONS="--max-old-space-size=3072"
 cd /home/z/my-project
 exec npx next dev -p 3000
